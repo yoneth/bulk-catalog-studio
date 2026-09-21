@@ -114,12 +114,16 @@ class BCS_Sync_Admin {
 			}
 			$fetcher = isset( $_POST['fetcher'] ) ? sanitize_key( wp_unslash( $_POST['fetcher'] ) ) : 'csv_export'; // phpcs:ignore WordPress.Security.NonceVerification.Missing
 			if ( 'sheets_api' === $fetcher ) {
-				self::redirect_error( __( 'The sheets_api fetcher is reserved and is not available in this build. Use csv_export.', 'bulk-catalog-studio' ), 'connections' );
+				$sheet_config = array(
+					'spreadsheet_id' => isset( $_POST['spreadsheet_id'] ) ? sanitize_text_field( wp_unslash( $_POST['spreadsheet_id'] ) ) : '', // phpcs:ignore WordPress.Security.NonceVerification.Missing
+					'range'          => isset( $_POST['range'] ) ? sanitize_text_field( wp_unslash( $_POST['range'] ) ) : 'A1:Z10000', // phpcs:ignore WordPress.Security.NonceVerification.Missing
+				);
+			} else {
+				$sheet_config = array(
+					'url' => isset( $_POST['url'] ) ? esc_url_raw( wp_unslash( $_POST['url'] ) ) : '', // phpcs:ignore WordPress.Security.NonceVerification.Missing
+					'gid' => isset( $_POST['gid'] ) ? sanitize_text_field( wp_unslash( $_POST['gid'] ) ) : '0', // phpcs:ignore WordPress.Security.NonceVerification.Missing
+				);
 			}
-			$sheet_config = array(
-				'url' => isset( $_POST['url'] ) ? esc_url_raw( wp_unslash( $_POST['url'] ) ) : '', // phpcs:ignore WordPress.Security.NonceVerification.Missing
-				'gid' => isset( $_POST['gid'] ) ? sanitize_text_field( wp_unslash( $_POST['gid'] ) ) : '0', // phpcs:ignore WordPress.Security.NonceVerification.Missing
-			);
 			$args         = array(
 				'name'             => isset( $_POST['name'] ) ? sanitize_text_field( wp_unslash( $_POST['name'] ) ) : '', // phpcs:ignore WordPress.Security.NonceVerification.Missing
 				'fetcher'          => $fetcher,
@@ -135,7 +139,7 @@ class BCS_Sync_Admin {
 				// legacy sheets_api connection to the operational CSV fetcher.
 				$args['credentials'] = null;
 			}
-			if ( isset( $_POST['credentials'] ) && '' !== trim( (string) wp_unslash( $_POST['credentials'] ) ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- value is sanitized as textarea JSON below.
+			if ( 'sheets_api' === $fetcher && isset( $_POST['credentials'] ) && '' !== trim( (string) wp_unslash( $_POST['credentials'] ) ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- value is sanitized as textarea JSON below.
 				$args['credentials'] = sanitize_textarea_field( wp_unslash( $_POST['credentials'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
 			}
 			$result = $connection_id ? BCS_Sync_Connection::update( $connection_id, $args ) : BCS_Sync_Connection::insert( $args );
@@ -448,10 +452,13 @@ class BCS_Sync_Admin {
 		echo '<input type="hidden" name="bcs_sync_action" value="save_connection" /><input type="hidden" name="connection_id" value="' . esc_attr( (string) $edit_id ) . '" />';
 		echo '<table class="form-table"><tbody>';
 		self::form_row( 'name', __( 'Name', 'bulk-catalog-studio' ), '<input class="regular-text" type="text" name="name" value="' . esc_attr( $connection['name'] ) . '" required />' );
-		$fetcher = '<select name="fetcher"><option value="csv_export"' . selected( $connection['fetcher'], 'csv_export', false ) . '>csv_export</option></select> <span class="description">' . esc_html__( 'The sheets_api fetcher is reserved; csv_export is the operational fetcher in this build.', 'bulk-catalog-studio' ) . '</span>';
+		$fetcher = '<select name="fetcher"><option value="csv_export"' . selected( $connection['fetcher'], 'csv_export', false ) . '>csv_export</option><option value="sheets_api"' . selected( $connection['fetcher'], 'sheets_api', false ) . '>sheets_api</option></select> <span class="description">' . esc_html__( 'sheets_api uses a read-only service account; credentials are encrypted at rest.', 'bulk-catalog-studio' ) . '</span>';
 		self::form_row( 'fetcher', __( 'Fetcher', 'bulk-catalog-studio' ), $fetcher );
-		self::form_row( 'url', __( 'CSV export URL', 'bulk-catalog-studio' ), '<input class="large-text" type="url" name="url" value="' . esc_attr( isset( $config['url'] ) ? $config['url'] : '' ) . '" placeholder="https://docs.google.com/.../export?format=csv" />' );
-		self::form_row( 'gid', __( 'Sheet GID', 'bulk-catalog-studio' ), '<input class="small-text" type="text" name="gid" value="' . esc_attr( isset( $config['gid'] ) ? $config['gid'] : '0' ) . '" />' );
+		self::form_row( 'url', __( 'CSV export URL', 'bulk-catalog-studio' ), '<input class="large-text" type="url" name="url" value="' . esc_attr( isset( $config['url'] ) ? $config['url'] : '' ) . '" placeholder="https://docs.google.com/.../export?format=csv" /> <span class="description">' . esc_html__( 'Used by csv_export.', 'bulk-catalog-studio' ) . '</span>' );
+		self::form_row( 'gid', __( 'Sheet GID', 'bulk-catalog-studio' ), '<input class="small-text" type="text" name="gid" value="' . esc_attr( isset( $config['gid'] ) ? $config['gid'] : '0' ) . '" /> <span class="description">' . esc_html__( 'Used by csv_export.', 'bulk-catalog-studio' ) . '</span>' );
+		self::form_row( 'spreadsheet_id', __( 'Spreadsheet ID', 'bulk-catalog-studio' ), '<input class="large-text" type="text" name="spreadsheet_id" value="' . esc_attr( isset( $config['spreadsheet_id'] ) ? $config['spreadsheet_id'] : '' ) . '" placeholder="1AbC..." /> <span class="description">' . esc_html__( 'Used by sheets_api.', 'bulk-catalog-studio' ) . '</span>' );
+		self::form_row( 'range', __( 'API range', 'bulk-catalog-studio' ), '<input class="regular-text" type="text" name="range" value="' . esc_attr( isset( $config['range'] ) ? $config['range'] : 'A1:Z10000' ) . '" placeholder="Products!A1:Z10000" /> <span class="description">' . esc_html__( 'A1 notation used by sheets_api.', 'bulk-catalog-studio' ) . '</span>' );
+		self::form_row( 'credentials', __( 'Service-account JSON', 'bulk-catalog-studio' ), '<textarea class="large-text code" name="credentials" rows="6" placeholder="Paste JSON only when adding or rotating a sheets_api key."></textarea> <span class="description">' . esc_html__( 'Never echoed back; leave blank to keep the existing encrypted key.', 'bulk-catalog-studio' ) . '</span>' );
 		self::form_row( 'mapping', __( 'Column mapping JSON', 'bulk-catalog-studio' ), '<textarea class="large-text code" name="column_mapping" rows="4">' . esc_html( (string) $mapping ) . '</textarea>' );
 		self::form_row( 'policy', __( 'Policy JSON', 'bulk-catalog-studio' ), '<textarea class="large-text code" name="policy" rows="4">' . esc_html( (string) $policy ) . '</textarea>' );
 		self::form_row( 'thresholds', __( 'Thresholds JSON', 'bulk-catalog-studio' ), '<textarea class="large-text code" name="thresholds" rows="5">' . esc_html( (string) $thresholds ) . '</textarea>' );
@@ -823,6 +830,10 @@ class BCS_Sync_Admin {
 		}
 		if ( '' === $ref && ! empty( $config['url'] ) ) {
 			$ref = sanitize_text_field( (string) $config['url'] );
+		}
+		if ( 'sheets_api' === ( isset( $connection['fetcher'] ) ? $connection['fetcher'] : '' ) ) {
+			$range = isset( $config['range'] ) && '' !== (string) $config['range'] ? (string) $config['range'] : 'A1:Z10000';
+			return ( '' === $ref ? '' : $ref ) . ' (' . $range . ')';
 		}
 		$gid = isset( $config['gid'] ) && '' !== (string) $config['gid'] ? $config['gid'] : '0';
 		return ( '' === $ref ? '' : $ref ) . ' (gid ' . $gid . ')';

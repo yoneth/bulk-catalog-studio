@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Versi runbook** | 2.0 — custom MCP server (Fase C — disiapkan test engineer, dieksekusi orchestrator di Fase D) |
+| **Versi runbook** | 3.0 — batch BCS + BCS Sync Fase 8–9; disiapkan test engineer, dieksekusi orchestrator |
 | **Target** | https://cf.djavaweb.com — webroot `/home/runcloud/webapps/cf` |
 | **Custom MCP server** | **`https://cf.djavaweb.com/wp-json/bcs-mcp/mcp`** — `serverInfo.name` = `Bulk Catalog Studio MCP` |
-| **Tools** | `tools/list` mengembalikan **tepat 8 tool individual**: `bcs-parse-source`, `bcs-check-duplicates`, `bcs-build-plan`, `bcs-approve-plan`, `bcs-execute-batch`, `bcs-job-status`, `bcs-rollback-batch`, `bcs-audit-log` |
+| **Tools** | `tools/list` mengembalikan **tepat 11 tool individual**: 8 tool batch + `bcs-sync-list-connections`, `bcs-sync-run`, `bcs-sync-approve-run` |
 | **Invocation** | `tools/call` **langsung** ke nama tool individual dengan `arguments` sesuai input schema ability — custom server TIDAK memiliki meta-tool `mcp-adapter-discover-abilities` / `mcp-adapter-execute-ability` |
 | **Transport** | **HANYA HTTP** dengan Application Password (dua langkah: `initialize` → tangkap `Mcp-Session-Id` → request berikutnya membawa header session). STDIO tidak dipakai untuk alur custom |
 | **Stack** | WordPress 7.1.1 + WooCommerce + plugin `bulk-catalog-studio` 1.0.0 + plugin `mcp-adapter`, PHP CLI 7.4 |
@@ -99,8 +99,8 @@ Tanpa header session → error JSON-RPC `-32600` "Missing Mcp-Session-Id header"
 
 - Plugin `bulk-catalog-studio`, `woocommerce`, **dan `mcp-adapter`** aktif; permalink **bukan** Plain.
 - Endpoint `https://cf.djavaweb.com/wp-json/bcs-mcp/mcp` balas **401** tanpa auth.
-- 3 tabel `wp_bcs_jobs`, `wp_bcs_plans`, `wp_bcs_audit` ada (aktivasi sukses).
-- `wp eval 'var_dump(wp_has_ability("bcs/parse-source"));'` → true (sumber registrasi 8 tool custom server).
+- 5 tabel `wp_bcs_jobs`, `wp_bcs_plans`, `wp_bcs_audit`, `wp_bcs_connections`, `wp_bcs_sync_runs` ada (aktivasi sukses).
+- `wp eval 'var_dump(wp_has_ability("bcs/parse-source"));'` → true (sumber registrasi 11 tool custom server).
 
 ---
 
@@ -114,7 +114,7 @@ bash tests/e2e/00-prereq.sh
 
 Cek yang dilakukan: tooling (jq/curl) → transport `http` → kredensial env ter-set → WP reachable →
 plugin **mcp-adapter + woocommerce + bulk-catalog-studio** aktif → permalink →
-`bcs/parse-source` terdaftar di registry → 3 tabel `bcs_*` → fixture ada →
+`bcs/parse-source` terdaftar di registry → 5 tabel `bcs_*` → fixture ada →
 endpoint custom balas 401 tanpa auth → initialize menghasilkan `Mcp-Session-Id`.
 
 **Manual jika perlu diagnosis:**
@@ -138,13 +138,13 @@ bash tests/e2e/01-smoke.sh
 Yang diuji:
 
 1. `initialize` → `Mcp-Session-Id` didapat dan **`serverInfo.name` = `Bulk Catalog Studio MCP`** (persis).
-2. `tools/list` (dengan header session) → **tepat 8 tool individual** dan nama lengkap:
-   `bcs-parse-source, bcs-check-duplicates, bcs-build-plan, bcs-approve-plan, bcs-execute-batch, bcs-job-status, bcs-rollback-batch, bcs-audit-log`.
+2. `tools/list` (dengan header session) → **tepat 11 tool individual** dan nama lengkap:
+   8 tool batch (`bcs-parse-source, bcs-check-duplicates, bcs-build-plan, bcs-approve-plan, bcs-execute-batch, bcs-job-status, bcs-rollback-batch, bcs-audit-log`) plus `bcs-sync-list-connections, bcs-sync-run, bcs-sync-approve-run`.
 3. NEGATIF: **tidak ada** meta-tool `mcp-adapter-discover-abilities` / `mcp-adapter-get-ability-info` /
    `mcp-adapter-execute-ability` di custom server (invocation memang tools/call langsung).
 4. NEGATIF: tidak ada nama tool ber-slash (`bcs/…`) — custom server memakai nama dash.
 
-**Abort (keras):** `serverInfo.name` salah, jumlah tool ≠ 8, nama tidak lengkap, atau meta-tool
+**Abort (keras):** `serverInfo.name` salah, jumlah tool ≠ 11, nama tidak lengkap, atau meta-tool
 ditemukan → STOP (kemungkinan mengarah ke server default adapter, bukan `bcs-mcp`); jangan lanjut
 happy path.
 
@@ -255,7 +255,7 @@ Setelah 04 lulus, katalog kembali bersih; **trash boleh dikosongkan manual oleh 
 
 ```bash
 wp --path=/home/runcloud/webapps/cf plugin deactivate bulk-catalog-studio
-wp --path=/home/runcloud/webapps/cf db query "SHOW TABLES LIKE '%bcs_%';"          # 3 tabel masih ada
+wp --path=/home/runcloud/webapps/cf db query "SHOW TABLES LIKE '%bcs_%';"          # 5 tabel masih ada
 wp --path=/home/runcloud/webapps/cf option get bcs_db_version                       # masih ada
 wp --path=/home/runcloud/webapps/cf post list --post_type=product --format=count    # produk utuh
 wp --path=/home/runcloud/webapps/cf plugin activate bulk-catalog-studio
@@ -295,7 +295,7 @@ Lulus bila: tabel `bcs_*` + options `bcs_*` hilang; produk/attachment tidak ters
 | AC-6 | Rollback | `04-rollback.sh` (`bcs-rollback-batch`; trash 28+60, 0 produk hidup, seed tak tersentuh); sub-kasus update→restore: jalankan alur varian `on_duplicate: update` di staging, rollback, bandingkan 5 field dengan `before` di `wp_bcs_plans.plan_json` | otomatis + varian staging |
 | AC-7 | Deaktivasi tanpa kehilangan data | §6.1 runbook (deactivate → cek tabel/option/produk → activate → `bcs-job-status`) | manual wp-cli + curl |
 | AC-8 | Uninstall bersih | §6.2 runbook di **staging**: `wp plugin uninstall` → tabel/options hilang, produk tetap | manual, staging |
-| AC-9 | Tulis ber-permission + audit | Dengan Application Password user editor (tanpa `manage_woocommerce`): `tools/call` → `bcs-execute-batch` → harus ditolak; 8 tool dengan kredensial `mcp-catalog` → lolos + entri audit (`actor_via=mcp`) | manual curl |
+| AC-9 | Tulis ber-permission + audit | Dengan Application Password user editor (tanpa `manage_woocommerce`): `tools/call` → `bcs-execute-batch` → harus ditolak; 11 tool dengan kredensial `mcp-catalog` → lolos + entri audit (`actor_via=mcp`) | manual curl |
 | AC-10 | Deteksi duplikasi | `02-happy-path.sh` langkah `check-duplicates` (`bcs-check-duplicates`; 1 intra + 1 existing) + `03-verify-counts.sh` langkah `ac10-intra-dedup` (SKU ganda jadi 1 produk) | otomatis |
 | AC-11 | Idempotency & resume | Di staging: panggil `bcs-execute-batch` via curl dengan `--max-time 20` (kill di tengah) → tunggu >5 menit → panggil ulang `{plan_id, resume:true}` → tidak ada SKU ganda (SQL `_sku` GROUP BY HAVING >1), job berakhir `done` | manual, staging |
 | AC-12 | Batas & scope | Staging: CSV 600 baris → `bcs-parse-source` ditolak (`max_rows_per_job` 500); input `{post_id: 999}` / field liar → ditolak schema (`additionalProperties:false`); verifikasi tak ada tabel non-produk tersentuh via audit + `SHOW TABLES` | manual, staging |
@@ -311,8 +311,8 @@ token yang sama harus ditolak (`token_used_at` terisi) — cukup satu panggilan 
 
 | # | Kondisi | Reaksi |
 |---|---|---|
-| A0 | `serverInfo.name` ≠ `Bulk Catalog Studio MCP`, jumlah tool ≠ 8, nama tidak lengkap, atau meta-tool adapter muncul di tools/list | **STOP.** Endpoint salah / server belum ter-deploy dengan benar — jangan jalankan tool write |
-| A1 | `bcs-parse-source` dkk. tidak responsif / error persisten di custom server | Cek plugin mcp-adapter + bulk-catalog-studio aktif; cek log PHP; STOP bila tidak pulih |
+| A0 | `serverInfo.name` ≠ `Bulk Catalog Studio MCP`, jumlah tool ≠ 11, nama tidak lengkap, atau meta-tool adapter muncul di tools/list | **STOP.** Endpoint salah / server belum ter-deploy dengan benar — jangan jalankan tool write |
+| A1 | `bcs-parse-source`/`bcs-sync-run` dkk. tidak responsif / error persisten di custom server | Cek plugin mcp-adapter + bulk-catalog-studio aktif; cek log PHP; STOP bila tidak pulih |
 | A2 | Plugin mcp-adapter / WooCommerce / bulk-catalog-studio inactive, permalink Plain, tabel `bcs_*` hilang | STOP; perbaiki pra-syarat (00-prereq) |
 | A3 | `bcs-parse-source` error / `total_rows ≠ 30` | STOP; belum ada efek katalog; review `warnings`/`errors` |
 | A4 | `bcs-check-duplicates`: intra=0 atau existing=0 | STOP; AC-10 tidak terverifikasi — periksa seed & fixture |
@@ -330,7 +330,7 @@ token yang sama harus ditolak (`token_used_at` terisi) — cukup satu panggilan 
 |---|---|
 | Job/plan ganda karena rerun | Semua skrip pakai state file; `bcs-parse-source` hanya dipanggil bila `job_id` kosong |
 | Kredensial bocor di skrip/log | Application Password hanya via env `BCS_WP_USER`/`BCS_APP_PASSWORD`; skrip tidak pernah mencetaknya |
-| Endpoint yang salah (server default adapter, bukan bcs-mcp) | 01-smoke memvalidasi `serverInfo.name` + tepat 8 tool individual + ketiadaan meta-tool sebelum alur write |
+| Endpoint yang salah (server default adapter, bukan bcs-mcp) | 01-smoke memvalidasi `serverInfo.name` + tepat 11 tool individual + ketiadaan meta-tool sebelum alur write |
 | Rate limit 60 panggilan/menit | Satu alur ≈ 10–12 panggilan; bila kena, tunggu 60 detik lalu rerun (resumable) |
 | Sesi MCP HTTP idle/kadaluarsa | Sesi dibuat ulang otomatis per run skrip (`bcs_http_session` saat session kosong); timeout request 300 s |
 | Uninstall tidak sengaja di cf | AC-8 **hanya** di §6.2 staging; tidak ada skrip yang meng-uninstall — semua 00–04 read-only/write-produk saja |
@@ -343,3 +343,146 @@ token yang sama harus ditolak (`token_used_at` terisi) — cukup satu panggilan 
 - `/tmp/bcs-e2e-state.json` — job_id, plan_id, plan_hash, summary, counts, stage, diff_preview_url.
 - `/tmp/bcs-e2e-results-<skrip>.jsonl` — jejak PASS/FAIL/STOP per langkah (lampirkan ke laporan QA).
 - `/tmp/bcs-e2e-init.json` — body response initialize (bukti `serverInfo.name`).
+
+---
+
+# 9. Runbook BCS Sync Fase 8–9 (CSV + Sheets API)
+
+Bagian ini adalah alur baru yang terpisah dari batch E2E pada bagian 1–8. Enam skrip
+`sync-00-prereq.sh` sampai `sync-05-agent-gate.sh` bersifat **resumable** dan menyimpan
+state ke `/tmp/bcs-sync-e2e-state.json`. Skrip tidak dijalankan selama development ini;
+runbook ini menjadi instruksi eksekusi untuk orchestrator pada environment yang sudah
+disiapkan.
+
+## 9.1 Urutan dan cakupan
+
+```text
+sync-00-prereq
+  → sync-01-csv-connection (fetch, threshold, approval, apply)
+  → sync-02-guards (invalid/empty/missing/price/delete)
+  → sync-03-conflict-rollback (S9 + S12)
+  → sync-04-chaos (S11 SIGKILL/resume/idempotency)
+  → sync-05-agent-gate (S10 tools/call build-plan rejection)
+```
+
+Semua skrip menulis JSONL ke `/tmp/bcs-sync-e2e-results-<skrip>.jsonl`. Exit code `0`
+berarti PASS, `1` berarti FAIL, dan `2` berarti STOP/abort. Jalankan ulang skrip yang
+berhenti setelah penyebabnya diperbaiki; jangan menghapus state kecuali memang ingin
+memulai fixture baru.
+
+## 9.2 Environment wajib
+
+```bash
+export BCS_WP_USER='user-application-password'
+export BCS_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
+export BCS_WP_ROOT='/home/runcloud/webapps/cf'
+export BCS_WP_BIN='/usr/local/bin/wp'
+export BCS_MCP_ENDPOINT='https://cf.djavaweb.com/wp-json/bcs-mcp/mcp'
+export BCS_TRANSPORT=http
+
+# URL CSV export terkontrol; setiap URL harus sudah dapat diakses worker.
+export BCS_SYNC_CONN_CSV_URL='https://.../export?format=csv&gid=0'
+export BCS_SYNC_CONN_EMPTY_URL='https://...'
+export BCS_SYNC_CONN_MISSING_URL='https://...'
+export BCS_SYNC_CONN_PRICE_URL='https://...'
+export BCS_SYNC_CONN_DELETE_URL='https://...'
+export BCS_SYNC_CONN_ROLLBACK_URL='https://...'
+export BCS_SYNC_CONN_CHAOS_URL='https://...'
+
+# Opsional; default semua GID = 0.
+export BCS_SYNC_CONN_CSV_GID=0
+export BCS_SYNC_CONN_EMPTY_GID=0
+export BCS_SYNC_CONN_MISSING_GID=0
+export BCS_SYNC_CONN_PRICE_GID=0
+export BCS_SYNC_CONN_DELETE_GID=0
+export BCS_SYNC_CONN_ROLLBACK_GID=0
+export BCS_SYNC_CONN_CHAOS_GID=0
+
+# Jika CSV fixture tidak memakai SKU SYNC-001, pilih SKU yang sudah tersinkron.
+export BCS_SYNC_CONFLICT_SKU='SYNC-001'
+export BCS_SYNC_CONFLICT_PRICE='120'
+```
+
+Jangan menaruh Application Password, service-account JSON, private key, atau URL
+bertoken ke file skrip/state/commit. Kredensial Sheets API untuk unit test lokal
+boleh disediakan melalui environment/file sementara yang tidak di-commit.
+
+## 9.3 Pra-syarat dan eksekusi
+
+```bash
+bash tests/e2e/sync-00-prereq.sh
+bash tests/e2e/sync-01-csv-connection.sh
+bash tests/e2e/sync-02-guards.sh
+bash tests/e2e/sync-03-conflict-rollback.sh
+bash tests/e2e/sync-04-chaos.sh
+bash tests/e2e/sync-05-agent-gate.sh
+```
+
+`sync-00` harus memastikan plugin aktif, dua tabel sync, `bcs_db_version >= 1.2.0`,
+WP-CLI `bcs sync`, initialize MCP, dan tepat **11 nama tool dash**. Semua fixture URL
+harus non-kosong. Jika ada STOP, jangan lanjut ke skrip berikutnya.
+
+`sync-01` membuat atau menggunakan ulang koneksi `csv_export`, menjalankan
+`test-connection`, lalu memastikan run pertama berhenti di `awaiting_approval` tanpa
+menulis produk. Token approval didapat dari layar Sync Runs/admin atau helper eksplisit
+untuk test:
+
+```bash
+BCS_SYNC_TOKEN_HELPER=none bash tests/e2e/sync-01-csv-connection.sh
+# Setelah token manusia tersedia:
+BCS_SYNC_APPROVAL_TOKEN='BCS-XXXXX' bash tests/e2e/sync-01-csv-connection.sh
+```
+
+Helper default `wpcli` hanya boleh digunakan untuk automasi environment uji. Token
+plaintext tidak disimpan ke state.
+
+`sync-02` menjalankan guard negatif dan memulihkan URL sumber setelah setiap kasus:
+`failed_fetch`, `fetch_zero_rows`, `missing_rows_guard`, quarantine harga ekstrem
+sementara operasi lain tetap berjalan, serta 11 delete eksplisit yang harus tertahan di
+`awaiting_approval`. Tidak boleh ada write/trash saat guard yang seharusnya abort.
+
+`sync-03` mengubah harga satu SKU secara manual dengan `post_modified` lebih baru,
+memastikan conflict flag dibuat tanpa menimpa harga WP, mengakui resolusi *keep WP*,
+menjalankan fixture update, rollback hanya run terbaru, lalu memastikan rollback run
+lama ditolak. Sumber asli dipulihkan pada akhir skrip.
+
+`sync-04` menaikkan threshold hanya pada koneksi fixture, menjalankan worker di
+background, melakukan `SIGKILL` setelah 3 detik, mempercepat heartbeat menjadi stale
+hanya untuk determinisme test, lalu menjalankan worker ulang. Lulus bila run menjadi
+`done`, named lock tidak deadlock, dan query `SKU GROUP BY ... HAVING COUNT(*) > 1`
+tidak menemukan SKU owned ganda. Konfigurasi koneksi sebelum chaos dipulihkan.
+
+`sync-05` memanggil langsung `tools/call` ke `bcs-parse-source`, `bcs-check-duplicates`,
+dan `bcs-build-plan` dengan `regular_price` pada SKU milik koneksi aktif. Panggilan
+terakhir **wajib ditolak** dan pesannya menyebut connection id serta `regular_price`.
+Skrip tidak memanggil `execute-batch`.
+
+## 9.4 Sheets API dan verifikasi lokal
+
+Fetcher `sheets_api` diuji lokal melalui `tests/test-bcs-sync-sheets.php`: JWT RS256,
+token transient 50 menit, cache hit/expiry, konversi values API ke parser CSV,
+credential encryption round-trip, invalid key, HTTP/API error, zero rows, schema
+mismatch/drift, rate limit, dan sharing guard. Jalankan tanpa jaringan live:
+
+```bash
+php -l plugin/bulk-catalog-studio/includes/class-bcs-sync-fetcher-sheets-api.php
+php -l tests/test-bcs-sync-sheets.php
+php tests/test-bcs-sync-sheets.php
+```
+
+Setelah perubahan PHP, jalankan juga seluruh test harness lokal yang tersedia dan lint
+semua file PHP tersentuh. **Jangan** menjalankan live E2E, deploy, SSH, atau commit dari
+sesi implementasi ini.
+
+## 9.5 Abort criteria Sync
+
+- `tools/list` bukan tepat 11 tool, serverInfo bukan `Bulk Catalog Studio MCP`, atau
+  transport bukan HTTP → STOP.
+- Credential/source fetch error, zero rows, schema drift, missing-row guard, atau
+  threshold guard gagal menghentikan run → STOP; cek `error_code` dan jangan retry
+  membabi buta.
+- Produk tertulis sebelum approval, conflict menimpa nilai manual, rollback run lama
+  diterima, chaos menghasilkan SKU ganda, atau agent gate menerima edit owned field →
+  STOP dan simpan JSONL sebagai bukti.
+- Setelah FAIL/STOP, sumber CSV harus dikembalikan ke `BCS_SYNC_CONN_CSV_URL` sebelum
+  investigasi berikutnya. Jangan menghapus tabel atau mengosongkan trash otomatis.

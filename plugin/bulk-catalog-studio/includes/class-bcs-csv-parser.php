@@ -608,6 +608,7 @@ class BCS_CSV_Parser {
 				'regular_price'  => null,
 				'sale_price'     => null,
 				'stock_quantity' => 0,
+				'stock_provided' => false,
 				'weight'         => null,
 				'dimensions'     => array(
 					'length' => null,
@@ -640,6 +641,7 @@ class BCS_CSV_Parser {
 				$variation['stock_quantity'] = 0;
 			} else {
 				$parsed_stock = self::parse_number( $stock_v );
+				$variation['stock_provided'] = null !== $parsed_stock;
 				$variation['stock_quantity'] = null === $parsed_stock ? 0 : (int) round( (float) $parsed_stock );
 			}
 

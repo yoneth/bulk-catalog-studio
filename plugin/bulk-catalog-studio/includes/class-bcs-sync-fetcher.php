@@ -46,7 +46,7 @@ class BCS_Sync_Fetcher_Factory {
 			return new BCS_Sync_Fetcher_Csv_Export();
 		}
 		if ( 'sheets_api' === $name ) {
-			return new WP_Error( 'fetcher_not_implemented', __( 'The sheets_api fetcher is reserved for the production sync phase.', 'bulk-catalog-studio' ) );
+			return new BCS_Sync_Fetcher_Sheets_Api();
 		}
 
 		return new WP_Error( 'invalid_fetcher', __( 'Unknown sync fetcher.', 'bulk-catalog-studio' ) );
@@ -59,6 +59,16 @@ class BCS_Sync_Fetcher_Factory {
 	 * @return BCS_Sync_Fetcher|WP_Error
 	 */
 	public static function create( $name ) {
+		return self::make( $name );
+	}
+
+	/**
+	 * Explicit factory alias used by sync integrations.
+	 *
+	 * @param string $name Fetcher enum.
+	 * @return BCS_Sync_Fetcher|WP_Error
+	 */
+	public static function factory( $name ) {
 		return self::make( $name );
 	}
 

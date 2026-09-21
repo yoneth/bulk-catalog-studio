@@ -36,6 +36,7 @@ require_once BCS_PLUGIN_DIR . 'includes/class-bcs-csv-parser.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-sync-connection.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-sync-fetcher.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-sync-fetcher-csv.php';
+require_once BCS_PLUGIN_DIR . 'includes/class-bcs-sync-fetcher-sheets-api.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-sync-diff.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-duplicate-checker.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-plan-builder.php';

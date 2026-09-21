@@ -235,6 +235,14 @@ class BCS_Plan_Builder {
 			return $rows;
 		}
 
+		// BCS Sync owns scalar source fields for SKUs that it has observed.
+		// Reject an agent/batch plan before materializing any update operation;
+		// this is deliberately loud rather than creating a second writer.
+		$sync_ownership = self::reject_sync_owned_fields( $rows );
+		if ( is_wp_error( $sync_ownership ) ) {
+			return $sync_ownership;
+		}
+
 		// Hasil duplicate-check terakhir (bila ada).
 		$staging = self::get_staging_row( $job_id );
 		$staging_data = $staging ? json_decode( (string) $staging->plan_json, true ) : array();
@@ -447,6 +455,142 @@ class BCS_Plan_Builder {
 			'diff_preview_url'   => admin_url( 'admin.php?page=bcs-jobs&view=plan&plan=' . $plan_id ),
 			'approval_token_hint' => __( 'The approval token is only displayed on the WP admin screen (diff page). Ask the human.', 'bulk-catalog-studio' ),
 		);
+	}
+
+	/**
+	 * Reject batch edits to fields owned by an active BCS Sync connection.
+	 *
+	 * Ownership is intentionally checked against policy.seen_skus instead of
+	 * querying product meta: it also covers a source SKU before a catalog
+	 * lookup is hydrated and follows the cheap guard in sync spec §6.4.
+	 *
+	 * @param array $rows Parsed staging rows.
+	 * @return true|WP_Error
+	 */
+	private static function reject_sync_owned_fields( array $rows ) {
+		if ( ! class_exists( 'BCS_Sync_Connection' ) || ! method_exists( 'BCS_Sync_Connection', 'list_connections' ) ) {
+			return true;
+		}
+
+		$connections = BCS_Sync_Connection::list_connections( 'active' );
+		if ( is_wp_error( $connections ) ) {
+			return $connections;
+		}
+
+		$owners = array();
+		foreach ( (array) $connections as $connection ) {
+			if ( ! is_array( $connection ) || empty( $connection['id'] ) ) {
+				continue;
+			}
+			$policy = isset( $connection['policy'] ) && is_array( $connection['policy'] ) ? $connection['policy'] : array();
+			foreach ( (array) ( isset( $policy['seen_skus'] ) ? $policy['seen_skus'] : array() ) as $seen_sku ) {
+				$seen_sku = strtoupper( trim( (string) $seen_sku ) );
+				if ( '' !== $seen_sku ) {
+					$owners[ strtolower( $seen_sku ) ] = (int) $connection['id'];
+				}
+			}
+		}
+
+		if ( empty( $owners ) ) {
+			return true;
+		}
+
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			$sku = strtoupper( trim( (string) ( isset( $row['sku'] ) ? $row['sku'] : '' ) ) );
+			if ( '' === $sku ) {
+				continue;
+			}
+
+			if ( isset( $owners[ strtolower( $sku ) ] ) ) {
+				$fields = self::sync_owned_fields_in_row( $row );
+				if ( ! empty( $fields ) ) {
+					return self::sync_ownership_error( $owners[ strtolower( $sku ) ], $sku, $fields[0] );
+				}
+			}
+
+			foreach ( (array) ( isset( $row['variations'] ) ? $row['variations'] : array() ) as $variation ) {
+				if ( ! is_array( $variation ) || empty( $variation['sku'] ) ) {
+					continue;
+				}
+				$variation_sku    = strtoupper( trim( (string) $variation['sku'] ) );
+				$variation_owner  = isset( $owners[ strtolower( $variation_sku ) ] ) ? $owners[ strtolower( $variation_sku ) ] : 0;
+				$variation_fields = self::sync_owned_fields_in_variation( $variation );
+				if ( $variation_owner && ! empty( $variation_fields ) ) {
+					return self::sync_ownership_error( $variation_owner, $variation_sku, $variation_fields[0] );
+				}
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Build the ownership error returned to the agent/batch caller.
+	 *
+	 * @param int    $connection_id Owning connection ID.
+	 * @param string $sku           Owned SKU.
+	 * @param string $field         Source-owned field.
+	 * @return WP_Error
+	 */
+	private static function sync_ownership_error( $connection_id, $sku, $field ) {
+		return new WP_Error(
+			'bcs_sync_ownership_conflict',
+			sprintf(
+				/* translators: 1: connection ID, 2: SKU, 3: field */
+				__( 'Build plan rejected: active sync connection #%1$d owns SKU "%2$s"; field "%3$s" is source-owned and must be changed through BCS Sync.', 'bulk-catalog-studio' ),
+				(int) $connection_id,
+				(string) $sku,
+				(string) $field
+			)
+		);
+	}
+
+	/**
+	 * List source-owned fields explicitly present in one parsed row.
+	 *
+	 * @param array $row Parsed row.
+	 * @return array
+	 */
+	private static function sync_owned_fields_in_row( array $row ) {
+		$fields = array();
+		if ( array_key_exists( 'regular_price', $row ) && null !== $row['regular_price'] ) {
+			$fields[] = 'regular_price';
+		}
+		if ( array_key_exists( 'sale_price', $row ) && null !== $row['sale_price'] ) {
+			$fields[] = 'sale_price';
+		}
+		if ( ! empty( $row['stock_provided'] ) ) {
+			$fields[] = 'stock_quantity';
+		}
+		foreach ( (array) ( isset( $row['variations'] ) ? $row['variations'] : array() ) as $variation ) {
+			$fields = array_merge( $fields, self::sync_owned_fields_in_variation( is_array( $variation ) ? $variation : array() ) );
+		}
+
+		return array_values( array_unique( $fields ) );
+	}
+
+	/**
+	 * List source-owned fields explicitly present in one parsed variation.
+	 *
+	 * @param array $variation Parsed variation.
+	 * @return array
+	 */
+	private static function sync_owned_fields_in_variation( array $variation ) {
+		$fields = array();
+		if ( array_key_exists( 'regular_price', $variation ) && null !== $variation['regular_price'] ) {
+			$fields[] = 'variation.regular_price';
+		}
+		if ( array_key_exists( 'sale_price', $variation ) && null !== $variation['sale_price'] ) {
+			$fields[] = 'variation.sale_price';
+		}
+		if ( ! empty( $variation['stock_provided'] ) ) {
+			$fields[] = 'variation.stock_quantity';
+		}
+
+		return array_values( array_unique( $fields ) );
 	}
 
 	/**
