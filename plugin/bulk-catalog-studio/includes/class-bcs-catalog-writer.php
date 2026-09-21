@@ -6,7 +6,8 @@
  * 1. Hanya memakai WC_Product / WC_Product_Variable / WC_Product_Variation
  *    CRUD + wc_get_product. TANPA wp_insert_post / update_post_meta langsung.
  * 2. Meta yang di-whitelist:
- *    - meta plugin: _bcs_row_key, _bcs_job_id, _bcs_plan_id
+ *    - meta plugin: _bcs_row_key, _bcs_job_id, _bcs_plan_id, _bcs_sync_hash,
+ *      _bcs_synced_at, _bcs_connection_id, _bcs_conflict_flag
  *    - meta SEO: _yoast_wpseo_title, _yoast_wpseo_metadesc,
  *      rank_math_title, rank_math_description (hanya provider yang relevan)
  *    - meta attachment core: _wp_attachment_image_alt (untuk alt text, gate1 #4)
@@ -246,6 +247,195 @@ class BCS_Catalog_Writer {
 				__( 'Unknown plan operation type: %s', 'bulk-catalog-studio' ),
 				sanitize_text_field( (string) $op['op'] )
 			)
+		);
+	}
+
+	/**
+	 * Update only scalar fields on an existing variation.
+	 *
+	 * Attributes and variation structure are intentionally immutable here.
+	 *
+	 * @param int    $product_id     Parent product ID.
+	 * @param string $variation_sku  Existing variation SKU key.
+	 * @param array  $payload        Scalar fields from sync.
+	 * @param array  $options        Sync metadata/options.
+	 * @return array|WP_Error { product_id, variation_id, before }
+	 */
+	public static function update_variation( $product_id, $variation_sku, array $payload, array $options = array() ) {
+		$guard = self::guard();
+		if ( is_wp_error( $guard ) ) {
+			return $guard;
+		}
+
+		$parent = wc_get_product( absint( $product_id ) );
+		if ( ! $parent instanceof WC_Product ) {
+			return new WP_Error( 'bcs_not_found', __( 'Parent product not found for variation update.', 'bulk-catalog-studio' ) );
+		}
+
+		$wanted_sku = trim( (string) $variation_sku );
+		$variation = null;
+		$children = method_exists( $parent, 'get_children' ) ? (array) $parent->get_children( 'edit' ) : array();
+		foreach ( $children as $child_id ) {
+			$child = wc_get_product( absint( $child_id ) );
+			if ( $child instanceof WC_Product_Variation && strtolower( trim( (string) $child->get_sku( 'edit' ) ) ) === strtolower( $wanted_sku ) ) {
+				$variation = $child;
+				break;
+			}
+		}
+
+		if ( ! $variation instanceof WC_Product_Variation ) {
+			return new WP_Error(
+				'variation_not_found',
+				sprintf(
+					/* translators: 1: variation SKU, 2: product ID */
+					__( 'Variation SKU %1$s was not found under product #%2$d.', 'bulk-catalog-studio' ),
+					$wanted_sku,
+					absint( $product_id )
+				)
+			);
+		}
+
+		$before = self::variation_snapshot( $variation );
+		$current_sku = trim( (string) $variation->get_sku( 'edit' ) );
+		if ( isset( $payload['sku'] ) && '' !== trim( (string) $payload['sku'] ) && strtolower( trim( (string) $payload['sku'] ) ) !== strtolower( $current_sku ) ) {
+			// The SKU is the idempotency key used to locate this variation. A
+			// key change must be modeled as an explicit create/delete operation,
+			// never guessed inside update_variation.
+			if ( empty( $options['allow_sku_change'] ) ) {
+				return new WP_Error( 'bcs_variation_sku_change', __( 'Changing a variation SKU during an update is not allowed; use an explicit variation replacement.', 'bulk-catalog-studio' ) );
+			}
+			$existing = BCS_Duplicate_Checker::find_by_sku( (string) $payload['sku'] );
+			if ( $existing && (int) $existing !== (int) $variation->get_id() ) {
+				return new WP_Error( 'bcs_duplicate_sku', __( 'The new variation SKU is already used by another product.', 'bulk-catalog-studio' ) );
+			}
+			$variation->set_sku( sanitize_text_field( (string) $payload['sku'] ) );
+		}
+		if ( array_key_exists( 'regular_price', $payload ) && null !== $payload['regular_price'] ) {
+			$variation->set_regular_price( '' === (string) $payload['regular_price'] ? '' : self::decimal( $payload['regular_price'] ) );
+		}
+		if ( array_key_exists( 'sale_price', $payload ) && null !== $payload['sale_price'] ) {
+			$variation->set_sale_price( '' === (string) $payload['sale_price'] ? '' : self::decimal( $payload['sale_price'] ) );
+		}
+		if ( array_key_exists( 'stock_quantity', $payload ) && null !== $payload['stock_quantity'] ) {
+			$quantity = (int) $payload['stock_quantity'];
+			$variation->set_stock_quantity( $quantity );
+			$variation->set_stock_status( $quantity > 0 ? 'instock' : 'outofstock' );
+		}
+
+		$variation_id = $variation->save();
+		if ( ! $variation_id ) {
+			return new WP_Error( 'bcs_write_failed', __( 'Failed to save the variation update.', 'bulk-catalog-studio' ) );
+		}
+		if ( $parent instanceof WC_Product_Variable ) {
+			if ( method_exists( 'WC_Product_Variable', 'sync' ) ) {
+				WC_Product_Variable::sync( $parent->get_id() );
+			}
+			if ( function_exists( 'wc_delete_product_transients' ) ) {
+				wc_delete_product_transients( $parent->get_id() );
+			}
+		}
+
+		if ( isset( $options['sync_hash'] ) && '' !== (string) $options['sync_hash'] ) {
+			$sync_state = self::set_sync_state( $variation->get_id(), (string) $options['sync_hash'], isset( $options['connection_id'] ) ? $options['connection_id'] : 0, isset( $options['synced_at'] ) ? $options['synced_at'] : null );
+			if ( is_wp_error( $sync_state ) ) {
+				return $sync_state;
+			}
+		}
+
+		return array(
+			'product_id'   => absint( $product_id ),
+			'variation_id' => (int) $variation->get_id(),
+			'before'       => $before,
+		);
+	}
+
+	/**
+	 * Soft-delete one existing variation.
+	 *
+	 * @param int    $product_id    Parent product ID.
+	 * @param string $variation_sku Variation SKU.
+	 * @return true|WP_Error
+	 */
+	public static function soft_delete_variation( $product_id, $variation_sku ) {
+		$guard = self::guard();
+		if ( is_wp_error( $guard ) ) {
+			return $guard;
+		}
+		$parent = wc_get_product( absint( $product_id ) );
+		if ( ! $parent instanceof WC_Product ) {
+			return new WP_Error( 'bcs_not_found', __( 'Parent product not found for variation delete.', 'bulk-catalog-studio' ) );
+		}
+		foreach ( (array) $parent->get_children( 'edit' ) as $child_id ) {
+			$variation = wc_get_product( absint( $child_id ) );
+			if ( $variation instanceof WC_Product_Variation && strtolower( trim( (string) $variation->get_sku( 'edit' ) ) ) === strtolower( trim( (string) $variation_sku ) ) ) {
+				$variation->delete( false );
+				return true;
+			}
+		}
+		return new WP_Error( 'variation_not_found', __( 'Variation was not found for soft delete.', 'bulk-catalog-studio' ) );
+	}
+
+	/**
+	 * Store per-record sync state through the WooCommerce CRUD object.
+	 *
+	 * @param int         $object_id    Product or variation ID.
+	 * @param string      $sync_hash    Canonical source hash.
+	 * @param int         $connection_id Connection ID.
+	 * @param string|null $synced_at    MySQL UTC timestamp.
+	 * @return true|WP_Error
+	 */
+	public static function set_sync_state( $object_id, $sync_hash, $connection_id, $synced_at = null ) {
+		$object = wc_get_product( absint( $object_id ) );
+		if ( ! $object instanceof WC_Product ) {
+			return new WP_Error( 'bcs_not_found', __( 'Product not found while saving sync state.', 'bulk-catalog-studio' ) );
+		}
+		if ( null === $synced_at || '' === (string) $synced_at ) {
+			$synced_at = class_exists( 'BCS_Settings' ) ? BCS_Settings::now_mysql() : gmdate( 'Y-m-d H:i:s' );
+		}
+		$object->update_meta_data( '_bcs_sync_hash', substr( preg_replace( '/[^a-f0-9]/i', '', (string) $sync_hash ), 0, 40 ) );
+		$object->update_meta_data( '_bcs_synced_at', (string) $synced_at );
+		$object->update_meta_data( '_bcs_connection_id', absint( $connection_id ) );
+		$object->update_meta_data( '_bcs_conflict_flag', '' );
+		$object->save();
+		return true;
+	}
+
+	/**
+	 * Flag a record as conflicted without touching owned catalog fields.
+	 *
+	 * @param int         $object_id Product/variation ID.
+	 * @param string|null $timestamp Conflict timestamp.
+	 * @return true|WP_Error
+	 */
+	public static function flag_sync_conflict( $object_id, $timestamp = null ) {
+		$object = wc_get_product( absint( $object_id ) );
+		if ( ! $object instanceof WC_Product ) {
+			return new WP_Error( 'bcs_not_found', __( 'Product not found while flagging the sync conflict.', 'bulk-catalog-studio' ) );
+		}
+		if ( null === $timestamp || '' === (string) $timestamp ) {
+			$timestamp = class_exists( 'BCS_Settings' ) ? BCS_Settings::now_mysql() : gmdate( 'Y-m-d H:i:s' );
+		}
+		$object->update_meta_data( '_bcs_conflict_flag', (string) $timestamp );
+		$object->save();
+		return true;
+	}
+
+	/**
+	 * Read a variation scalar snapshot for rollback/audit.
+	 *
+	 * @param WC_Product_Variation $variation Variation object.
+	 * @return array
+	 */
+	private static function variation_snapshot( $variation ) {
+		return array(
+			'id'             => (int) $variation->get_id(),
+			'parent_id'      => method_exists( $variation, 'get_parent_id' ) ? (int) $variation->get_parent_id() : 0,
+			'sku'            => (string) $variation->get_sku( 'edit' ),
+			'regular_price'  => (string) $variation->get_regular_price( 'edit' ),
+			'sale_price'     => (string) $variation->get_sale_price( 'edit' ),
+			'stock_quantity' => $variation->get_stock_quantity( 'edit' ),
+			'manage_stock'   => $variation->get_manage_stock( 'edit' ),
+			'stock_status'   => $variation->get_stock_status( 'edit' ),
 		);
 	}
 

@@ -35,6 +35,8 @@ class BCS_CSV_Parser {
 			'description',
 			'short_description',
 			'sku',
+			'sync_action',
+			'sync_note',
 			'regular_price',
 			'sale_price',
 			'stock_quantity',
@@ -434,6 +436,8 @@ class BCS_CSV_Parser {
 			'description'       => '',
 			'short_description' => '',
 			'sku'               => '',
+			'sync_action'       => '',
+			'sync_note'         => '',
 			'regular_price'     => null,
 			'sale_price'        => null,
 			'stock_quantity'    => 0,
@@ -457,6 +461,8 @@ class BCS_CSV_Parser {
 		// Nama & SKU wajib.
 		$row['name'] = self::first_value( $values, 'name' );
 		$row['sku']  = strtoupper( trim( self::first_value( $values, 'sku' ) ) );
+		$row['sync_action'] = strtolower( trim( self::first_value( $values, 'sync_action' ) ) );
+		$row['sync_note']   = function_exists( 'sanitize_textarea_field' ) ? sanitize_textarea_field( self::first_value( $values, 'sync_note' ) ) : self::first_value( $values, 'sync_note' );
 
 		if ( '' === $row['name'] && '' === $row['sku'] ) {
 			return null; // Baris inti kosong — lewati tanpa error.

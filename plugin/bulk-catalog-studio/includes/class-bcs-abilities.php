@@ -1000,13 +1000,14 @@ class BCS_Abilities {
 		$level  = (string) self::in( $input, 'level', 'all' );
 		$limit  = absint( self::in( $input, 'limit', 50 ) );
 		$offset = absint( self::in( $input, 'offset', 0 ) );
+		$source = (string) self::in( $input, 'source_type', '' );
 
 		$job = BCS_Job_Manager::get( $job_id );
 		if ( ! $job ) {
 			return new WP_Error( 'bcs_not_found', __( 'Job not found.', 'bulk-catalog-studio' ) );
 		}
 
-		$result = BCS_Audit_Logger::query( $job_id, $level, $limit, $offset );
+		$result = BCS_Audit_Logger::query( $job_id, $level, $limit, $offset, $source );
 
 		BCS_Audit_Logger::log_call(
 			'bcs/audit-log', 'audit_log', 'ok',

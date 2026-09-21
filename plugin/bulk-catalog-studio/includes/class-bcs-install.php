@@ -2,10 +2,12 @@
 /**
  * Rutinitas install/upgrade skema DB untuk Bulk Catalog Studio.
  *
- * Membuat 3 tabel persis spec §3.2–§3.4 via dbDelta:
+ * Membuat tabel BCS batch + sync via dbDelta:
  * - {prefix}bcs_jobs
  * - {prefix}bcs_plans
  * - {prefix}bcs_audit
+ * - {prefix}bcs_connections
+ * - {prefix}bcs_sync_runs
  *
  * @package BulkCatalogStudio
  */
@@ -106,7 +108,8 @@ class BCS_Install {
 			ability VARCHAR(60) NOT NULL DEFAULT '',
 			action VARCHAR(60) NOT NULL DEFAULT '',
 			actor_user_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
-			actor_via ENUM('mcp','wp_admin','wp_cli','system') NOT NULL DEFAULT 'system',
+			actor_via ENUM('mcp','wp_admin','wp_cli','system','sync','cron') NOT NULL DEFAULT 'system',
+			source VARCHAR(10) NOT NULL DEFAULT 'batch',
 			row_index INT UNSIGNED NULL DEFAULT NULL,
 			sku VARCHAR(100) NULL DEFAULT NULL,
 			product_id BIGINT UNSIGNED NULL DEFAULT NULL,
@@ -121,9 +124,105 @@ class BCS_Install {
 		) {$charset_collate};";
 		dbDelta( $sql_audit );
 
+		/*
+		 * Tabel connections — spec §2.1. JSON disimpan sebagai LONGTEXT agar
+		 * kompatibel dengan MySQL/MariaDB yang dipakai WordPress.
+		 */
+		$connections_table = $prefix . 'bcs_connections';
+		$sql_connections   = "CREATE TABLE {$connections_table} (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			name VARCHAR(120) NOT NULL DEFAULT '',
+			fetcher VARCHAR(20) NOT NULL DEFAULT 'csv_export',
+			sheet_config LONGTEXT NULL,
+			credentials LONGTEXT NULL,
+			column_mapping LONGTEXT NULL,
+			policy LONGTEXT NULL,
+			thresholds LONGTEXT NULL,
+			interval_minutes INT UNSIGNED NOT NULL DEFAULT 1,
+			status VARCHAR(12) NOT NULL DEFAULT 'paused',
+			last_ok_run_at DATETIME NULL DEFAULT NULL,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			PRIMARY KEY  (id),
+			KEY status (status),
+			KEY last_ok_run_at (last_ok_run_at),
+			KEY updated_at (updated_at)
+		) {$charset_collate};";
+		dbDelta( $sql_connections );
+
+		/*
+		 * Tabel sync runs — spec §2.2. heartbeat_at sengaja terpisah dari
+		 * finished_at agar request yang masih applying dapat dilanjutkan aman.
+		 */
+		$runs_table = $prefix . 'bcs_sync_runs';
+		$sql_runs   = "CREATE TABLE {$runs_table} (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			connection_id BIGINT UNSIGNED NOT NULL,
+			trigger VARCHAR(8) NOT NULL DEFAULT 'manual',
+			state VARCHAR(20) NOT NULL DEFAULT 'pending',
+			diff_hash CHAR(40) NULL DEFAULT NULL,
+			diff_summary LONGTEXT NULL,
+			fetched_rows INT UNSIGNED NOT NULL DEFAULT 0,
+			error_code VARCHAR(60) NULL DEFAULT NULL,
+			error_note TEXT NULL,
+			started_at DATETIME NOT NULL,
+			finished_at DATETIME NULL DEFAULT NULL,
+			heartbeat_at DATETIME NULL DEFAULT NULL,
+			PRIMARY KEY  (id),
+			KEY connection_state (connection_id, state),
+			KEY state_started (state, started_at),
+			KEY diff_hash (diff_hash),
+			KEY heartbeat_at (heartbeat_at)
+		) {$charset_collate};";
+		dbDelta( $sql_runs );
+
+		// dbDelta tidak selalu menambahkan kolom baru pada tabel existing.
+		self::maybe_upgrade_audit_source_column();
+		self::maybe_upgrade_audit_actor_via_column();
+
 		// Default settings hanya diisi bila belum ada (reactivation tidak menimpa).
 		add_option( 'bcs_settings', BCS_Settings::defaults() );
+		add_option( 'bcs_sync_settings', array() );
 
 		update_option( 'bcs_db_version', BCS_DB_VERSION, false );
+	}
+
+	/**
+	 * Pastikan kolom audit source ada pada instalasi lama.
+	 *
+	 * dbDelta tidak konsisten melakukan ALTER terhadap tabel existing pada
+	 * semua versi MySQL/MariaDB, sehingga kolom ini diperiksa eksplisit.
+	 *
+	 * @return void
+	 */
+	public static function maybe_upgrade_audit_source_column() {
+		global $wpdb;
+
+		$table = $wpdb->prefix . 'bcs_audit';
+		$column = $wpdb->get_row( $wpdb->prepare( "SHOW COLUMNS FROM {$table} LIKE %s", 'source' ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- nama tabel dari prefix terkontrol.
+		if ( $column ) {
+			return;
+		}
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.PreparedSQL.NotPrepared -- nama tabel dari prefix terkontrol; schema upgrade.
+		$wpdb->query( "ALTER TABLE {$table} ADD COLUMN source VARCHAR(10) NOT NULL DEFAULT 'batch' AFTER actor_via" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+	}
+
+	/**
+	 * Tambahkan nilai actor_via yang dipakai worker sync pada instalasi lama.
+	 *
+	 * @return void
+	 */
+	public static function maybe_upgrade_audit_actor_via_column() {
+		global $wpdb;
+
+		$table = $wpdb->prefix . 'bcs_audit';
+		$column = $wpdb->get_row( $wpdb->prepare( "SHOW COLUMNS FROM {$table} LIKE %s", 'actor_via' ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- nama tabel dari prefix terkontrol.
+		if ( ! $column || empty( $column->Type ) || ( false !== strpos( (string) $column->Type, "'sync'" ) && false !== strpos( (string) $column->Type, "'cron'" ) ) ) {
+			return;
+		}
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.PreparedSQL.NotPrepared -- nama tabel dari prefix terkontrol; schema upgrade.
+		$wpdb->query( "ALTER TABLE {$table} MODIFY COLUMN actor_via ENUM('mcp','wp_admin','wp_cli','system','sync','cron') NOT NULL DEFAULT 'system'" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 	}
 }

@@ -23,7 +23,7 @@ defined( 'ABSPATH' ) || exit;
  * Konstanta plugin. Semua identifier memakai prefix bcs_ sesuai standar proyek.
  */
 define( 'BCS_VERSION', '1.0.0' );
-define( 'BCS_DB_VERSION', '1.0.0' );
+define( 'BCS_DB_VERSION', '1.1.0' );
 define( 'BCS_PLUGIN_FILE', __FILE__ );
 define( 'BCS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BCS_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -33,20 +33,28 @@ require_once BCS_PLUGIN_DIR . 'includes/class-bcs-settings.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-audit-logger.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-job-manager.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-csv-parser.php';
+require_once BCS_PLUGIN_DIR . 'includes/class-bcs-sync-connection.php';
+require_once BCS_PLUGIN_DIR . 'includes/class-bcs-sync-fetcher.php';
+require_once BCS_PLUGIN_DIR . 'includes/class-bcs-sync-fetcher-csv.php';
+require_once BCS_PLUGIN_DIR . 'includes/class-bcs-sync-diff.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-duplicate-checker.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-plan-builder.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-approval-token.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-catalog-writer.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-executor.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-rollback-service.php';
+require_once BCS_PLUGIN_DIR . 'includes/class-bcs-sync-runner.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-install.php';
+if ( defined( 'WP_CLI' ) && WP_CLI ) {
+	require_once BCS_PLUGIN_DIR . 'includes/class-bcs-sync-cli.php';
+}
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-schemas.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-abilities.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-mcp-server.php';
 require_once BCS_PLUGIN_DIR . 'admin/class-bcs-admin.php';
 
 /**
- * Aktivasi plugin: buat 3 tabel via dbDelta + default settings.
+ * Aktivasi plugin: buat tabel batch + sync via dbDelta + default settings.
  * Tidak menyentuh data produk sama sekali.
  *
  * @return void
@@ -124,3 +132,15 @@ add_action( 'plugins_loaded', array( 'BCS_Admin', 'init' ) );
  * guard class lengkap ada di BCS_MCP_Server (admin notice, tanpa fatal).
  */
 BCS_MCP_Server::init();
+
+/* WP-CLI sync worker registration — plugin tidak memasang WP-Cron. */
+if ( defined( 'WP_CLI' ) && WP_CLI ) {
+	add_action(
+		'cli_init',
+		function () {
+			if ( class_exists( 'BCS_Sync_CLI' ) ) {
+				BCS_Sync_CLI::register();
+			}
+		}
+	);
+}

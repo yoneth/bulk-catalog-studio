@@ -95,7 +95,7 @@ class BCS_Rollback_Service {
 			}
 
 			// Hanya baris yang benar-benar sukses dieksekusi yang di-rollback.
-			if ( '' === $row_key || ! BCS_Audit_Logger::has_row_success( $job_id, $row_key ) ) {
+			if ( '' === $row_key || ! BCS_Audit_Logger::has_row_success( $job_id, $row_key, 'batch' ) ) {
 				continue;
 			}
 
@@ -233,7 +233,7 @@ class BCS_Rollback_Service {
 	 */
 	private static function find_created_product_id( $job_id, $row_key ) {
 		// 1) Sumber primer: audit job ini.
-		$from_audit = BCS_Audit_Logger::find_row_product_id( $job_id, $row_key, 'create_product' );
+		$from_audit = BCS_Audit_Logger::find_row_product_id( $job_id, $row_key, 'create_product', 'batch' );
 		if ( $from_audit ) {
 			return $from_audit;
 		}

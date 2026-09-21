@@ -84,7 +84,7 @@ class BCS_Schemas {
 						'column_mapping' => array(
 							'type'                 => 'object',
 							'additionalProperties' => array( 'type' => 'string' ),
-							'description'          => __( 'Map of CSV header -> canonical field: name, description, short_description, sku, regular_price, sale_price, stock_quantity, weight, length, width, height, categories, tags, attribute:<slug>, variation_sku, variation_attribute:<slug>, variation_regular_price, variation_stock_quantity, image_url, image_alt, seo_title, seo_description', 'bulk-catalog-studio' ),
+							'description'          => __( 'Map of CSV header -> canonical field: name, description, short_description, sku, sync_action, sync_note, regular_price, sale_price, stock_quantity, weight, length, width, height, categories, tags, attribute:<slug>, variation_sku, variation_attribute:<slug>, variation_regular_price, variation_stock_quantity, image_url, image_alt, seo_title, seo_description', 'bulk-catalog-studio' ),
 						),
 						'notes'         => array(
 							'type'        => 'string',
@@ -326,6 +326,11 @@ class BCS_Schemas {
 							'minimum' => 0,
 							'default' => 0,
 						),
+						'source_type' => array(
+							'type'        => 'string',
+							'enum'        => array( 'batch', 'sync' ),
+							'description' => __( 'Optional audit source filter.', 'bulk-catalog-studio' ),
+						),
 					),
 					'required'             => array( 'job_id' ),
 				);
@@ -554,7 +559,8 @@ class BCS_Schemas {
 									'level'         => array( 'type' => 'string', 'enum' => array( 'call', 'row' ) ),
 									'ability'       => array( 'type' => 'string' ),
 									'actor_user_id' => array( 'type' => 'integer' ),
-									'actor_via'     => array( 'type' => 'string', 'enum' => array( 'mcp', 'wp_admin', 'wp_cli', 'system' ) ),
+									'actor_via'     => array( 'type' => 'string', 'enum' => array( 'mcp', 'wp_admin', 'wp_cli', 'system', 'sync', 'cron' ) ),
+									'source'        => array( 'type' => 'string', 'enum' => array( 'batch', 'sync' ) ),
 									'action'        => array( 'type' => 'string', 'description' => __( 'example: create_product, update_variation, trash_product, approve_plan, rollback_row.', 'bulk-catalog-studio' ) ),
 									'row_index'     => array( 'type' => array( 'integer', 'null' ) ),
 									'sku'           => array( 'type' => array( 'string', 'null' ) ),
