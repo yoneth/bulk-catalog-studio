@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 01-smoke.sh — smoke test MCP Adapter + 8 ability bcs/*.
+# 01-smoke.sh — smoke test CUSTOM MCP SERVER (bcs-mcp, HTTP-only).
 #
-# 1) tools/list via JSON-RPC (STDIO default, HTTP opsional) → response valid.
-# 2) tools/call mcp-adapter-discover-abilities → HARUS menampilkan tepat 8
-#    ability dengan prefix 'bcs/'.
-# 3) Bila env BCS_WP_USER + BCS_APP_PASSWORD di-set → uji juga jalur HTTP
-#    (initialize → Mcp-Session-Id → discover) dan bandingkan hasilnya.
+# 1) initialize → tangkap Mcp-Session-Id + body response:
+#    serverInfo.name HARUS "Bulk Catalog Studio MCP".
+# 2) tools/list (dengan header session) → HARUS tepat 8 tool individual:
+#    bcs-parse-source, bcs-check-duplicates, bcs-build-plan, bcs-approve-plan,
+#    bcs-execute-batch, bcs-job-status, bcs-rollback-batch, bcs-audit-log.
+# 3) NEGATIF: meta-tool mcp-adapter-discover-abilities / mcp-adapter-execute-ability
+#    TIDAK boleh ada di custom server.
 #
-# READ-ONLY: tidak ada ability write yang dipanggil.
-# ABORT: jumlah ability bcs/* != 8 → STOP (exit 2), JANGAN lanjut happy path.
+# READ-ONLY: tidak ada tool write yang dipanggil.
+# ABORT: serverInfo.name salah, jumlah tool ≠ 8, nama tool tidak lengkap, atau
+# meta-tool adapter ditemukan → STOP (exit 2), JANGAN lanjut happy path.
 # =============================================================================
 export BCS_SCRIPT_NAME="01-smoke"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -17,51 +20,71 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 bcs_results_reset
 bcs_state_init
 
-EXPECTED_ABILITIES="bcs/audit-log bcs/approve-plan bcs/build-plan bcs/check-duplicates bcs/execute-batch bcs/job-status bcs/parse-source bcs/rollback-batch"
+# --- 0. Transport & kredensial ----------------------------------------------
+bcs_require_http || bcs_finish
+bcs_require_http_creds || bcs_finish
 
-# --- 1. tools/list ----------------------------------------------------------
+# --- 1. initialize + serverInfo.name ----------------------------------------
+BCS_HTTP_SESSION="$(bcs_http_session 2>/dev/null)" || true
+if [ -n "$BCS_HTTP_SESSION" ] && [ -s "$BCS_INIT_BODY" ]; then
+	bcs_pass "initialize" "Mcp-Session-Id didapat (custom server $BCS_MCP_ENDPOINT)"
+else
+	bcs_stop "initialize" "initialize ke custom server gagal — cek kredensial/endpoint (00-prereq)"
+	bcs_finish
+fi
+
+server_name="$(jq -r '.result.serverInfo.name // empty' "$BCS_INIT_BODY" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || true)"
+if [ "$server_name" = "$BCS_MCP_SERVER_NAME" ]; then
+	bcs_pass "server-info" "serverInfo.name = '$server_name'"
+else
+	bcs_stop "server-info" "serverInfo.name = '${server_name:-?}' (harus '$BCS_MCP_SERVER_NAME') — endpoint salah atau bukan custom server BCS"
+fi
+
+# --- 2. tools/list → tepat 8 tool individual --------------------------------
 resp_tools="$(bcs_rpc tools/list '{}')" || true
-if [ -n "${resp_tools:-}" ] && printf '%s' "$resp_tools" | jq -e '.result' >/dev/null 2>&1; then
-	meta_tools="$(printf '%s' "$resp_tools" | jq -r '[.result.tools[]?.name] | length' 2>/dev/null || echo '?')"
-	bcs_pass "tools-list" "tools/list OK ($meta_tools tool; 3 meta-tool adapter diharapkan)"
-else
-	bcs_stop "tools-list" "tools/list gagal — cek 'wp mcp-adapter serve --user=$BCS_CLI_USER' manual"
+if [ -z "${resp_tools:-}" ] || ! printf '%s' "$resp_tools" | jq -e '.result' >/dev/null 2>&1; then
+	bcs_stop "tools-list" "tools/list gagal — periksa session header & endpoint"
+	bcs_finish
 fi
 
-# --- 2. discover-abilities (transport aktif) --------------------------------
-resp_disc="$(bcs_rpc tools/call '{"name":"mcp-adapter-discover-abilities","arguments":{}}')" || true
-raw_disc="${resp_disc:-}"
-found_count="$(bcs_count_bcs_abilities "$raw_disc")"
-found_list="$(bcs_list_bcs_abilities "$raw_disc")"
+tool_total="$(printf '%s' "$resp_tools" | jq -r '[.result.tools[]?.name] | length' 2>/dev/null || echo 0)"
+tool_names="$(printf '%s' "$resp_tools" | jq -r '.result.tools[]?.name' 2>/dev/null | sort | tr '\n' ' ' || true)"
+bcs_info "tools-list" "total tool = $tool_total: $tool_names"
 
-if [ "$found_count" -eq 8 ] 2>/dev/null; then
-	bcs_pass "discover-abilities" "8 ability bcs/* tampil: $found_list"
+if [ "$tool_total" -eq 8 ] 2>/dev/null; then
+	bcs_pass "tools-count" "tools/list mengembalikan tepat 8 tool individual"
 else
-	bcs_stop "discover-abilities" "ditemukan $found_count ability bcs/* (harus 8): '$found_list' — STOP, jangan lanjut execute"
+	bcs_stop "tools-count" "total tool = $tool_total (harus 8) — STOP, jangan lanjut execute"
 fi
 
-# Kelengkapan nama (semua 8 nama wajib ada).
+# Kelengkapan nama — semua 8 tool individual wajib ada.
 missing=""
-for a in $EXPECTED_ABILITIES; do
-	printf '%s' "$found_list" | grep -qw "${a#bcs/}" || missing="$missing $a"
+for t in $BCS_EXPECTED_TOOLS; do
+	printf '%s' "$tool_names" | grep -qw "$t" || missing="$missing $t"
 done
 if [ -z "$missing" ]; then
-	bcs_pass "discover-names" "semua 8 nama ability lengkap"
+	bcs_pass "tools-names" "semua 8 nama tool individual lengkap"
 else
-	bcs_stop "discover-names" "ability hilang:$missing"
+	bcs_stop "tools-names" "tool hilang:$missing"
 fi
 
-# --- 3. Jalur HTTP (hanya bila kredensial env tersedia) ---------------------
-if [ -n "${BCS_WP_USER:-}" ] && [ -n "${BCS_APP_PASSWORD:-}" ]; then
-	resp_http="$(BCS_TRANSPORT=http bcs_rpc tools/call '{"name":"mcp-adapter-discover-abilities","arguments":{}}')" || true
-	http_count="$(bcs_count_bcs_abilities "${resp_http:-}")"
-	if [ "$http_count" -eq 8 ] 2>/dev/null; then
-		bcs_pass "discover-http" "jalur HTTP juga menampilkan 8 ability bcs/*"
-	else
-		bcs_fail "discover-http" "jalur HTTP menampilkan $http_count ability (harus 8) — cek Application Password/permalink"
-	fi
+# --- 3. NEGATIF: meta-tool adapter tidak boleh ada di custom server ---------
+meta_found=""
+for meta in mcp-adapter-discover-abilities mcp-adapter-get-ability-info mcp-adapter-execute-ability; do
+	printf '%s' "$tool_names" | grep -qw "$meta" && meta_found="$meta_found $meta"
+done
+if [ -z "$meta_found" ]; then
+	bcs_pass "no-meta-tools" "tidak ada meta-tool adapter (invocation = tools/call langsung ke tool individual)"
 else
-	bcs_info "discover-http" "BCS_WP_USER/BCS_APP_PASSWORD tidak di-set — lewati uji jalur HTTP"
+	bcs_stop "no-meta-tools" "meta-tool ditemukan di custom server:$meta_found — endpoint kemungkinan server default adapter, bukan bcs-mcp"
+fi
+
+# --- 4. NEGATIF: nama tool bcs/* (slash) tidak boleh ada --------------------
+slash_tools="$(printf '%s' "$tool_names" | { grep -o 'bcs/[a-z0-9-]*' || true; } | sort -u | tr '\n' ' ' || true)"
+if [ -z "$slash_tools" ]; then
+	bcs_pass "no-slash-names" "tidak ada nama tool ber-slash (custom server memakai nama dash)"
+else
+	bcs_stop "no-slash-names" "nama tool ber-slash ditemukan: $slash_tools — custom server memakai bcs-<slug>"
 fi
 
 bcs_finish

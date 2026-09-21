@@ -2,7 +2,8 @@
 # =============================================================================
 # 02-happy-path.sh — alur happy path AC-1 (fixture 30 produk fashion).
 #
-# Urutan (spec §4):
+# Alur: CUSTOM MCP SERVER bcs-mcp (HTTP-only), tools/call langsung
+# ke tool individual. Urutan (spec §4):
 #   seed produk existing (SKU row 3) → parse-source → check-duplicates →
 #   build-plan → [NEGATIF] execute-batch sebelum approval (harus DITOLAK) →
 #   approval (token) → approve-plan → execute-batch dry_run=true →
@@ -28,6 +29,10 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 bcs_results_reset
 bcs_state_init
+
+# Custom server bcs-mcp: HANYA HTTP + kredensial env wajib.
+bcs_require_http || bcs_finish
+bcs_require_http_creds || bcs_finish
 
 jget() { printf '%s' "$1" | jq -r "$2 // empty" 2>/dev/null || true; }
 
@@ -94,7 +99,7 @@ if [ -z "$job_id" ]; then
 		},
 		notes: "E2E happy path 30 baris (docs/test/e2e-runbook.md)"
 	}')"
-	res="$(bcs_call_ability "bcs/parse-source" "$input")" || res=""
+	res="$(bcs_call_tool "bcs-parse-source" "$input")" || res=""
 	if result_ok "$res" && [ "$(jget "$res" '.status')" = "parsed" ]; then
 		job_id="$(jget "$res" '.job_id')"
 		total_rows="$(jget "$res" '.total_rows')"
@@ -119,7 +124,7 @@ fi
 # ---------------------------------------------------------------------------
 plan_id="$(bcs_state_get '.plan_id // ""')"
 if [ -z "$plan_id" ]; then
-	res="$(bcs_call_ability "bcs/check-duplicates" '{"job_id":'"$job_id"',"strategy":"sku+title","on_duplicate":"flag_only"}')" || res=""
+	res="$(bcs_call_tool "bcs-check-duplicates" '{"job_id":'"$job_id"',"strategy":"sku+title","on_duplicate":"flag_only"}')" || res=""
 	if result_ok "$res"; then
 		intra="$(jget "$res" '.intra_batch_duplicates | length // 0')"
 		existing="$(jget "$res" '.existing_matches | length // 0')"
@@ -138,7 +143,7 @@ if [ -z "$plan_id" ]; then
 	# ---------------------------------------------------------------------------
 	# Langkah 3 — build-plan (status=draft, attribute global pa_*)
 	# ---------------------------------------------------------------------------
-	res="$(bcs_call_ability "bcs/build-plan" '{"job_id":'"$job_id"',"on_duplicate":"skip","defaults":{"status":"draft","manage_stock":true,"attribute_scope":"global_pa"},"image_policy":{"mode":"attachment_id_only","set_alt_text":true}}')" || res=""
+	res="$(bcs_call_tool "bcs-build-plan" '{"job_id":'"$job_id"',"on_duplicate":"skip","defaults":{"status":"draft","manage_stock":true,"attribute_scope":"global_pa"},"image_policy":{"mode":"attachment_id_only","set_alt_text":true}}')" || res=""
 	if result_ok "$res" && [ -n "$(jget "$res" '.plan_hash')" ]; then
 		plan_id="$(jget "$res" '.plan_id')"
 		plan_hash="$(jget "$res" '.plan_hash')"
@@ -149,11 +154,13 @@ if [ -z "$plan_id" ]; then
 		bcs_state_set diff_preview_url "$(jget "$res" '.diff_preview_url')"
 		c_simple="$(jget "$res" '.summary.create_simple // 0')"; c_var="$(jget "$res" '.summary.create_variable // 0')"
 		c_variations="$(jget "$res" '.summary.create_variations // 0')"; c_skip="$(jget "$res" '.summary.skip_duplicates // 0')"
-		if [ "$(( c_simple + c_var ))" -eq 28 ] && [ "$c_variations" -ge 60 ] && [ "$c_skip" -ge 2 ]; then
+		# Fixture sendiri punya 1 duplikat SKU dan seed menambah 1 produk existing;
+		# kedua baris ber-SKU duplikat di-skip, sehingga totalnya 27 create + 3 skip.
+		if [ "$(( c_simple + c_var ))" -eq 27 ] && [ "$c_variations" -ge 60 ] && [ "$c_skip" -eq 3 ]; then
 			bcs_pass "build-plan" "plan_id=$plan_id hash=${plan_hash:0:12}… summary=$summary"
 			bcs_state_set stage "planned"
 		else
-			bcs_fail "build-plan" "summary tidak sesuai harapan (create=28, variasi>=60, skip>=2): $summary"
+			bcs_fail "build-plan" "summary tidak sesuai harapan (create=27, variasi>=60, skip=3): $summary"
 		fi
 	else
 		bcs_stop "build-plan" "gagal: $(printf '%s' "${res:-$BCS_LAST_RESPONSE}" | head -c 300)"
@@ -166,9 +173,10 @@ plan_hash="$(bcs_state_get '.plan_hash // ""')"
 summary="$(bcs_state_get '.summary // "{}"')"
 
 # ---------------------------------------------------------------------------
-# Langkah 4 — [NEGATIF, AC-4] execute-batch SEBELUM approval harus DITOLAK
+# Langkah 4 — [NEGATIF, AC-4] execute-batch NYATA sebelum approval harus DITOLAK.
+# dry_run bukan aksi tulis dan memang boleh dipakai sebagai simulasi plan.
 # ---------------------------------------------------------------------------
-res="$(bcs_call_ability "bcs/execute-batch" '{"plan_id":'"$plan_id"',"dry_run":true}')" || res=""
+res="$(bcs_call_tool "bcs-execute-batch" '{"plan_id":'"$plan_id"'}')" || res=""
 if bcs_last_response_rejected 'approv|planned|permission|denied|invalid|error|gagal'; then
 	bcs_pass "execute-before-approve-rejected" "execute-batch pada plan belum approved DITOLAK (AC-4) ✔"
 else
@@ -176,7 +184,7 @@ else
 fi
 
 # job masih planned
-res="$(bcs_call_ability "bcs/job-status" '{"job_id":'"$job_id"'}')" || res=""
+res="$(bcs_call_tool "bcs-job-status" '{"job_id":'"$job_id"'}')" || res=""
 st="$(jget "$res" '.jobs[0].status // .status')"
 if [ "$st" = "planned" ]; then
 	bcs_pass "job-status-planned" "job $job_id masih planned (tidak ada efek samping)"
@@ -202,16 +210,18 @@ echo is_wp_error( $t ) ? "ERR:" . $t->get_error_message() : $t;
 STOP: minta token dari Mas Rio via layar admin ${BCS_SITE_URL}/wp-admin/admin.php?page=bcs-jobs&view=plan&plan=$plan_id \
 (Generate token approval), lalu jalankan ulang: BCS_APPROVAL_TOKEN=BCS-XXXXX $0 (state di-resume dari sini). \
 Matikan helper dengan BCS_TOKEN_HELPER=none bila token manual diwajibkan."
+		bcs_finish
 	fi
 	bcs_info "approval-token" "token diperoleh via $token_src"
 
-	res="$(bcs_call_ability "bcs/approve-plan" '{"plan_id":'"$plan_id"',"plan_hash":"'"$plan_hash"'","confirmation_token":"'"$token"'"}')" || res=""
+	res="$(bcs_call_tool "bcs-approve-plan" '{"plan_id":'"$plan_id"',"plan_hash":"'"$plan_hash"'","confirmation_token":"'"$token"'"}')" || res=""
 	if result_ok "$res" && [ "$(jget "$res" '.status')" = "approved" ]; then
 		bcs_pass "approve-plan" "status=approved approved_by=$(jget "$res" '.approved_by')"
 		bcs_state_set stage "approved"
 	else
 		note="$(jget "$res" '.note')"
 		bcs_stop "approve-plan" "approval gagal: '${note:-token invalid/expired}' — generate token baru lalu rerun"
+		bcs_finish
 	fi
 else
 	bcs_info "approve-plan" "resume: stage=$stage (approval sudah dilewati)"
@@ -221,7 +231,7 @@ fi
 # Langkah 6 — execute-batch dry_run=true (tidak boleh menulis produk)
 # ---------------------------------------------------------------------------
 if [ "$stage" != "executed" ]; then
-	res="$(bcs_call_ability "bcs/execute-batch" '{"plan_id":'"$plan_id"',"dry_run":true}')" || res=""
+	res="$(bcs_call_tool "bcs-execute-batch" '{"plan_id":'"$plan_id"',"dry_run":true}')" || res=""
 	if result_ok "$res" && [ "$(jget "$res" '.status')" = "done" ] && [ "$(jget "$res" '.counts.failed')" = "0" ]; then
 		bcs_pass "execute-dry-run" "dry_run done, failed=0, counts=$(printf '%s' "$res" | jq -c '.counts')"
 	else
@@ -242,7 +252,7 @@ fi
 # Langkah 7 — execute-batch sungguhan (sekali saja)
 # ---------------------------------------------------------------------------
 if [ "$stage" != "executed" ]; then
-	res="$(bcs_call_ability "bcs/execute-batch" '{"plan_id":'"$plan_id"'}')" || res=""
+	res="$(bcs_call_tool "bcs-execute-batch" '{"plan_id":'"$plan_id"'}')" || res=""
 	if result_ok "$res" && [ "$(jget "$res" '.status')" = "done" ]; then
 		counts="$(printf '%s' "$res" | jq -c '.counts')"
 		bcs_state_set counts "$counts"
@@ -262,7 +272,7 @@ fi
 # ---------------------------------------------------------------------------
 # Langkah 8 — job-status final = done (AC-1)
 # ---------------------------------------------------------------------------
-res="$(bcs_call_ability "bcs/job-status" '{"job_id":'"$job_id"'}')" || res=""
+res="$(bcs_call_tool "bcs-job-status" '{"job_id":'"$job_id"'}')" || res=""
 st="$(jget "$res" '.jobs[0].status // .status')"
 if [ "$st" = "done" ]; then
 	bcs_pass "job-status-done" "job $job_id = done (AC-1)"
@@ -274,7 +284,7 @@ fi
 # ---------------------------------------------------------------------------
 # Langkah 9 — audit-log level row (AC-5)
 # ---------------------------------------------------------------------------
-res="$(bcs_call_ability "bcs/audit-log" '{"job_id":'"$job_id"',"level":"row","limit":200}')" || res=""
+res="$(bcs_call_tool "bcs-audit-log" '{"job_id":'"$job_id"',"level":"row","limit":200}')" || res=""
 if result_ok "$res"; then
 	total="$(jget "$res" '.total')"
 	create_rows="$(printf '%s' "$res" | jq -r '[.entries[]? | select(.action=="create_product" and .product_id != null and .actor_via=="mcp")] | length' 2>/dev/null || echo 0)"

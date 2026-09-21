@@ -2,7 +2,7 @@
 # =============================================================================
 # 04-rollback.sh — rollback job (AC-6) + verifikasi trash.
 #
-# 1) bcs/rollback-batch { job_id, confirm: true, scope: "all" }
+# 1) bcs-rollback-batch { job_id, confirm: true, scope: "all" }
 #    → produk baru → TRASH (soft), variasi → trash, audit per-baris rolled_back.
 # 2) Verifikasi SQL: jumlah produk/variasi bertag _bcs_job_id dengan
 #    post_status='trash' == jumlah yang dibuat.
@@ -17,6 +17,10 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 bcs_results_reset
 bcs_state_init
 
+# Custom server bcs-mcp: HANYA HTTP + kredensial env wajib.
+bcs_require_http || bcs_finish
+bcs_require_http_creds || bcs_finish
+
 jget() { printf '%s' "$1" | jq -r "$2 // empty" 2>/dev/null || true; }
 
 job_id="${BCS_JOB_ID:-$(bcs_state_get '.job_id // ""')}"
@@ -25,7 +29,7 @@ job_id="${BCS_JOB_ID:-$(bcs_state_get '.job_id // ""')}"
 prefix="$(bcs_table_prefix)"
 
 # --- 0. Pastikan job layak rollback ------------------------------------------
-res="$(bcs_call_ability "bcs/job-status" '{"job_id":'"$job_id"'}')" || res=""
+res="$(bcs_call_tool "bcs-job-status" '{"job_id":'"$job_id"'}')" || res=""
 st="$(jget "$res" '.jobs[0].status // .status')"
 already_rolled=0
 case "$st" in
@@ -36,7 +40,7 @@ esac
 
 # --- 1. Panggil rollback-batch (sekali) --------------------------------------
 if [ "$already_rolled" = "0" ]; then
-	res="$(bcs_call_ability "bcs/rollback-batch" '{"job_id":'"$job_id"',"confirm":true,"scope":"all"}')" || res=""
+	res="$(bcs_call_tool "bcs-rollback-batch" '{"job_id":'"$job_id"',"confirm":true,"scope":"all"}')" || res=""
 	if bcs_last_response_ok && [ "$(jget "$res" '.status')" = "rolled_back" ]; then
 		bcs_pass "rollback-batch" "status=rolled_back counts=$(printf '%s' "$res" | jq -c '.counts')"
 		bcs_state_set rollback_counts "$(printf '%s' "$res" | jq -c '.counts')"
@@ -76,7 +80,7 @@ else
 fi
 
 # --- 4. Audit berisi rolled_back per baris ------------------------------------
-res="$(bcs_call_ability "bcs/audit-log" '{"job_id":'"$job_id"',"level":"row","limit":200}')" || res=""
+res="$(bcs_call_tool "bcs-audit-log" '{"job_id":'"$job_id"',"level":"row","limit":200}')" || res=""
 rb_rows="$(printf '%s' "$res" | jq -r '[.entries[]? | select(.status=="rolled_back")] | length' 2>/dev/null || echo 0)"
 if [ "${rb_rows:-0}" -ge 28 ] 2>/dev/null; then
 	bcs_pass "audit-rolled-back" "$rb_rows entri audit berstatus rolled_back (AC-5/AC-6)"

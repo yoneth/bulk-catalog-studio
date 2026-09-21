@@ -3,7 +3,7 @@
 # 03-verify-counts.sh — verifikasi jumlah produk/variasi & jejak di DB (AC-1, AC-5, AC-10).
 #
 # Sumber kebenaran:
-#   1) bcs/job-status  : status done + counter job.
+#   1) bcs-job-status  : status done + counter job.
 #   2) SQL via wp db query: produk & variasi bertag meta _bcs_job_id = job.
 #   3) wp post list / wp term list: sampel SKU, taksonomi pa_ukuran/pa_warna.
 #
@@ -16,6 +16,10 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 bcs_results_reset
 bcs_state_init
 
+# Custom server bcs-mcp: HANYA HTTP + kredensial env wajib.
+bcs_require_http || bcs_finish
+bcs_require_http_creds || bcs_finish
+
 jget() { printf '%s' "$1" | jq -r "$2 // empty" 2>/dev/null || true; }
 
 job_id="${BCS_JOB_ID:-$(bcs_state_get '.job_id // ""')}"
@@ -26,7 +30,7 @@ bcs_info "state" "verifikasi job_id=$job_id plan_id=${plan_id:-?}"
 prefix="$(bcs_table_prefix)"
 
 # --- 1. Status job = done + counter cocok dengan hasil execute --------------
-res="$(bcs_call_ability "bcs/job-status" '{"job_id":'"$job_id"'}')" || res=""
+res="$(bcs_call_tool "bcs-job-status" '{"job_id":'"$job_id"'}')" || res=""
 st="$(jget "$res" '.jobs[0].status // .status')"
 if [ "$st" = "done" ]; then
 	bcs_pass "job-status" "job $job_id = done"

@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # =============================================================================
-# lib.sh — helper bersama untuk skrip E2E Bulk Catalog Studio (BCS).
+# lib.sh — helper bersama untuk skrip E2E Bulk Catalog Studio (BCS)
+#          terhadap CUSTOM MCP SERVER yang sudah live:
 #
-# Pola pemanggilan MCP mengikuti PERSIS docs/research/abilities-mcp-api.md §6:
-#   1) STDIO  : echo '<json-rpc>' | wp mcp-adapter serve --user=U --server=S
-#   2) HTTP   : curl dua langkah initialize → tangkap Mcp-Session-Id → request
-#               berikutnya membawa header Mcp-Session-Id (Application Password).
+#   Endpoint : https://cf.djavaweb.com/wp-json/bcs-mcp/mcp   (env BCS_MCP_ENDPOINT)
+#   serverInfo.name : "Bulk Catalog Studio MCP"
+#   tools/list      : 8 tool individual (bcs-parse-source, … bcs-audit-log)
+#   Invocation      : tools/call LANGSUNG ke nama tool individual —
+#                     TIDAK ada meta-tool mcp-adapter-discover-abilities /
+#                     mcp-adapter-execute-ability di custom server.
+#   Transport       : HANYA HTTP (Application Password). Alur custom tidak
+#                     memakai STDIO; helper STDIO generik tetap disediakan
+#                     untuk server default adapter (opsional, tidak dipakai).
 #
-# Kredensial TIDAK pernah di-hardcode:
-#   - STDIO  : memakai user WP-CLI via BCS_CLI_USER (default: admin).
-#   - HTTP   : memakai env var BCS_WP_USER + BCS_APP_PASSWORD (Application
-#              Password), wajib diisi operator/orchestrator sebelum eksekusi.
+# Kredensial TIDAK pernah di-hardcode: env var BCS_WP_USER + BCS_APP_PASSWORD.
 #
 # Semua skrip E2E: set -euo pipefail, aman dijalankan ulang (idempoten).
 # =============================================================================
@@ -21,11 +24,12 @@ set -euo pipefail
 # Konfigurasi (semua dioverride via env; nilai default = environment cf)
 # ---------------------------------------------------------------------------
 BCS_SITE_URL="${BCS_SITE_URL:-https://cf.djavaweb.com}"
+BCS_MCP_ENDPOINT="${BCS_MCP_ENDPOINT:-${BCS_SITE_URL%/}/wp-json/bcs-mcp/mcp}"
+BCS_MCP_SERVER_NAME="${BCS_MCP_SERVER_NAME:-Bulk Catalog Studio MCP}"
 BCS_WP_ROOT="${BCS_WP_ROOT:-/home/runcloud/webapps/cf}"
 BCS_WP_BIN="${BCS_WP_BIN:-/usr/local/bin/wp}"
-BCS_MCP_SERVER="${BCS_MCP_SERVER:-mcp-adapter-default-server}"
 BCS_CLI_USER="${BCS_CLI_USER:-admin}"
-BCS_TRANSPORT="${BCS_TRANSPORT:-stdio}" # stdio | http
+BCS_TRANSPORT="${BCS_TRANSPORT:-http}" # custom server: HANYA http (stdio = helper generik lama)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -33,6 +37,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BCS_STATE_FILE="${BCS_STATE_FILE:-/tmp/bcs-e2e-state.json}"
 BCS_FIXTURE="${BCS_FIXTURE:-$REPO_ROOT/plugin/bulk-catalog-studio/tests/fixtures/sample-fashion-30.csv}"
 BCS_RESULTS_FILE="${BCS_RESULTS_FILE:-/tmp/bcs-e2e-results-${BCS_SCRIPT_NAME:-run}.jsonl}"
+BCS_INIT_BODY="${BCS_INIT_BODY:-/tmp/bcs-e2e-init.json}" # body response initialize
+
+# 8 tool individual custom server (nama dash — bukan bcs/* dan bukan meta-tool).
+BCS_EXPECTED_TOOLS="bcs-parse-source bcs-check-duplicates bcs-build-plan bcs-approve-plan bcs-execute-batch bcs-job-status bcs-rollback-batch bcs-audit-log"
 
 # ---------------------------------------------------------------------------
 # Logging & hasil PASS/FAIL/STOP (JSON Lines di stdout + file)
@@ -74,53 +82,80 @@ bcs_finish() {
 }
 
 # ---------------------------------------------------------------------------
-# WP-CLI
+# WP-CLI (hanya untuk pra-cek lokal di VPS; alur MCP custom tidak lewat sini)
 # ---------------------------------------------------------------------------
 bcs_wp() { "$BCS_WP_BIN" --path="$BCS_WP_ROOT" "$@"; }
 
 bcs_table_prefix() { bcs_wp db prefix 2>/dev/null | tail -n 1 || true; }
 
 bcs_db_scalar() { # $1 = SQL; prints single scalar
-	bcs_wp db query --skip-column-names "$1" 2>/dev/null | tail -n 1 || true
+	# WP-CLI dapat menambahkan baris kosong setelah hasil query; ambil baris
+	# non-kosong terakhir agar scalar valid tidak hilang oleh `tail -n 1`.
+	bcs_wp db query --skip-column-names "$1" 2>/dev/null | awk 'NF { last = $0 } END { print last }' || true
 }
 
 # ---------------------------------------------------------------------------
-# Transport MCP: STDIO (default) & HTTP (Application Password)
+# Transport: HTTP (satu-satunya jalur custom server, Application Password)
 # ---------------------------------------------------------------------------
-bcs_http_endpoint() { printf '%s/wp-json/mcp/%s' "$BCS_SITE_URL" "$BCS_MCP_SERVER"; }
+bcs_require_http() {
+	if [ "$BCS_TRANSPORT" != "http" ]; then
+		bcs_stop "transport" "custom server bcs-mcp hanya mendukung HTTP — set BCS_TRANSPORT=http (default); stdio hanya helper generik lama"
+		return 1
+	fi
+	bcs_pass "transport" "transport=http → $BCS_MCP_ENDPOINT"
+}
 
-# Langkah 1 HTTP: initialize → cetak Mcp-Session-Id dari response header.
+bcs_require_http_creds() {
+	if [ -z "${BCS_WP_USER:-}" ] || [ -z "${BCS_APP_PASSWORD:-}" ]; then
+		bcs_stop "http-creds" "env BCS_WP_USER dan BCS_APP_PASSWORD (Application Password) WAJIB di-set — kredensial tidak pernah di-hardcode"
+		return 1
+	fi
+	bcs_pass "http-creds" "kredensial ter-set untuk user '${BCS_WP_USER}'"
+}
+
+# Langkah 1: initialize → simpan body ke BCS_INIT_BODY, cetak Mcp-Session-Id.
 bcs_http_session() {
 	: "${BCS_WP_USER:?Env BCS_WP_USER wajib di-set untuk transport http}"
 	: "${BCS_APP_PASSWORD:?Env BCS_APP_PASSWORD (Application Password) wajib di-set untuk transport http}"
-	local headers session
-	headers="$(curl -sS --max-time 30 -D - -o /dev/null -X POST "$(bcs_http_endpoint)" \
+	local tmpdir session
+	tmpdir="$(mktemp -d)"
+	if ! curl -sS --max-time 30 -D "$tmpdir/h" -o "$tmpdir/b" -X POST "$BCS_MCP_ENDPOINT" \
 		--user "$BCS_WP_USER:$BCS_APP_PASSWORD" \
 		-H "Content-Type: application/json" \
-		-d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"bcs-e2e","version":"1.0.0"}}}')" || return 1
-	session="$(printf '%s\n' "$headers" | tr -d '\r' | awk 'tolower($1)=="mcp-session-id:" {print $2}' | head -n 1)"
+		-d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"bcs-e2e","version":"1.0.0"}}}' 2>/dev/null; then
+		rm -rf "$tmpdir"
+		return 1
+	fi
+	session="$(tr -d '\r' < "$tmpdir/h" | awk 'tolower($1)=="mcp-session-id:" {print $2}' | head -n 1 || true)"
+	if [ -s "$tmpdir/b" ]; then
+		mv "$tmpdir/b" "$BCS_INIT_BODY"
+	fi
+	rm -rf "$tmpdir"
 	[ -n "$session" ] || return 1
 	printf '%s' "$session"
 }
 
 BCS_HTTP_SESSION=""
 
-bcs_stdio_rpc() { # $1 = payload JSON-RPC lengkap
-	printf '%s\n' "$1" | bcs_wp mcp-adapter serve --user="$BCS_CLI_USER" --server="$BCS_MCP_SERVER" 2>/dev/null
-}
-
 bcs_http_rpc() { # $1 = payload JSON-RPC lengkap
 	[ -n "$BCS_HTTP_SESSION" ] || BCS_HTTP_SESSION="$(bcs_http_session)"
-	curl -sS --max-time 300 -X POST "$(bcs_http_endpoint)" \
+	curl -sS --max-time 300 -X POST "$BCS_MCP_ENDPOINT" \
 		--user "$BCS_WP_USER:$BCS_APP_PASSWORD" \
 		-H "Content-Type: application/json" \
 		-H "Mcp-Session-Id: $BCS_HTTP_SESSION" \
 		-d "$1"
 }
 
+# Helper generik STDIO (server default adapter) — TIDAK dipakai alur custom.
+bcs_stdio_rpc() { # $1 = payload JSON-RPC lengkap
+	printf '%s\n' "$1" | bcs_wp mcp-adapter serve --user="$BCS_CLI_USER" --server="mcp-adapter-default-server" 2>/dev/null
+}
+
 # bcs_rpc <method> <params-json> → cetak SATU objek JSON-RPC response (result/error).
 bcs_rpc() {
-	local method="$1" params="${2:-{}}"
+	local method="$1"
+	local params="$2"
+	[ -n "$params" ] || params='{}' 
 	local id payload raw
 	id="${BCS_RPC_ID:-700}"
 	payload="$(printf '{"jsonrpc":"2.0","id":%s,"method":"%s","params":%s}' "$id" "$method" "$params")"
@@ -133,7 +168,7 @@ bcs_rpc() {
 	printf '%s\n' "$raw" | jq -c 'select(type=="object" and (has("result") or has("error")))' 2>/dev/null | tail -n 1
 }
 
-# Ekstrak payload hasil ability dari response tools/call.
+# Ekstrak payload hasil tool dari response tools/call.
 # Urutan: .result.structuredContent → .result.content[0].text (di-parse JSON bila bisa).
 bcs_rpc_result_json() { # $1 = response object
 	local resp="$1" out="" text
@@ -144,7 +179,7 @@ bcs_rpc_result_json() { # $1 = response object
 			out="$(printf '%s' "$text" | jq -c . 2>/dev/null || printf '%s' "$text")"
 		fi
 	fi
-	# Bungkus {result: …} (gotcha flattened output) dibuka bila satu-satunya kunci.
+	# Bungkus {result: …} dibuka bila satu-satunya kunci.
 	if printf '%s' "$out" | jq -e 'type=="object" and (keys == ["result"])' >/dev/null 2>&1; then
 		out="$(printf '%s' "$out" | jq -c '.result')"
 	fi
@@ -152,33 +187,51 @@ bcs_rpc_result_json() { # $1 = response object
 }
 
 BCS_LAST_RESPONSE=""
+BCS_LAST_RESPONSE_FILE="${BCS_LAST_RESPONSE_FILE:-/tmp/bcs-e2e-last-response.json}"
 
-# bcs_call_ability <ability-name> <input-json> → cetak hasil ability (JSON bila bisa).
-# Response JSON-RPC lengkap disimpan di BCS_LAST_RESPONSE untuk asersi lanjutan.
-bcs_call_ability() {
-	local ability="$1" input="${2:-{}}" params resp
-	params="$(printf '{"name":"mcp-adapter-execute-ability","arguments":{"ability":"%s","input":%s}}' "$ability" "$input")"
+# bcs_call_tool <tool-name> <arguments-json> → panggilan LANGSUNG tools/call
+# ke tool individual custom server (TANPA meta-tool). Response lengkap disimpan
+# juga ke file karena pemanggil biasanya memakai command substitution; assignment
+# variabel di subshell Bash tidak dapat bertahan pada proses induk.
+bcs_call_tool() {
+	local tool="$1"
+	local args="$2"
+	[ -n "$args" ] || args='{}'
+	local params resp
+	params="$(printf '{"name":"%s","arguments":%s}' "$tool" "$args")"
 	resp="$(bcs_rpc tools/call "$params")" || return 1
 	BCS_LAST_RESPONSE="$resp"
+	printf '%s' "$resp" > "$BCS_LAST_RESPONSE_FILE"
 	bcs_rpc_result_json "$resp"
+}
+
+bcs_last_response_raw() {
+	if [ -n "$BCS_LAST_RESPONSE" ]; then
+		printf '%s' "$BCS_LAST_RESPONSE"
+	elif [ -s "$BCS_LAST_RESPONSE_FILE" ]; then
+		cat "$BCS_LAST_RESPONSE_FILE"
+	fi
 }
 
 # 0 = response menandakan SUKSES; 1 = ada indikasi error JSON-RPC / isError.
 bcs_last_response_ok() {
-	[ -n "$BCS_LAST_RESPONSE" ] || return 1
-	if printf '%s' "$BCS_LAST_RESPONSE" | jq -e '.error != null' >/dev/null 2>&1; then return 1; fi
-	if printf '%s' "$BCS_LAST_RESPONSE" | jq -e '.result.isError == true' >/dev/null 2>&1; then return 1; fi
+	local last
+	last="$(bcs_last_response_raw)"
+	[ -n "$last" ] || return 1
+	if printf '%s' "$last" | jq -e '.error != null' >/dev/null 2>&1; then return 1; fi
+	if printf '%s' "$last" | jq -e '.result.isError == true' >/dev/null 2>&1; then return 1; fi
 	return 0
 }
 
 # 0 = response mengandung indikasi DITOLAK (error / isError / pesan berisi pola).
 bcs_last_response_rejected() { # $1 = pola teks tambahan (regex, opsional)
 	if ! bcs_last_response_ok; then return 0; fi
-	local res pattern="$1"
-	res="$(bcs_rpc_result_json "$BCS_LAST_RESPONSE")"
+	local last res pattern="$1"
+	last="$(bcs_last_response_raw)"
+	res="$(bcs_rpc_result_json "$last")"
 	if printf '%s' "$res" | jq -e 'type=="object" and has("code") and has("message")' >/dev/null 2>&1; then return 0; fi
 	if [ -n "$pattern" ] && printf '%s' "$res" | grep -Eq "$pattern"; then return 0; fi
-	if printf '%s' "$BCS_LAST_RESPONSE" | grep -Eq "$pattern"; then return 0; fi
+	if [ -n "$pattern" ] && printf '%s' "$last" | grep -Eq "$pattern"; then return 0; fi
 	return 1
 }
 
@@ -202,7 +255,7 @@ bcs_state_set() { # $1 key  $2 value-string
 }
 
 # ---------------------------------------------------------------------------
-# Pra-syarat lingkungan (dipakai semua skrip; detail lengkap di 00-prereq.sh)
+# Pra-syarat lingkungan
 # ---------------------------------------------------------------------------
 bcs_require_tools() {
 	local missing=""
@@ -227,11 +280,11 @@ bcs_require_wp() {
 	bcs_pass "wp-reachable" "$(bcs_wp core version 2>/dev/null | tail -n 1)"
 }
 
-# Hitung ability bcs/* yang tampil dari raw response discovery.
-bcs_count_bcs_abilities() { # $1 = raw text (response discovery apa pun bentuknya)
-	printf '%s' "$1" | grep -o 'bcs/[a-z0-9-]*' | sort -u | wc -l | tr -d '[:space:]'
+# Hitung tool bcs-* yang tampil di response tools/list (nama dash).
+bcs_count_bcs_tools() { # $1 = raw text (response tools/list apa pun bentuknya)
+	printf '%s' "$1" | { grep -o 'bcs-[a-z0-9-]*' || true; } | sort -u | wc -l | tr -d '[:space:]'
 }
 
-bcs_list_bcs_abilities() {
-	printf '%s' "$1" | { grep -o 'bcs/[a-z0-9-]*' || true; } | sort -u | tr '\n' ' ' || true
+bcs_list_bcs_tools() {
+	printf '%s' "$1" | { grep -o 'bcs-[a-z0-9-]*' || true; } | sort -u | tr '\n' ' ' || true
 }
