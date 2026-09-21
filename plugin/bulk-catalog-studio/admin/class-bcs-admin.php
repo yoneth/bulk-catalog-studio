@@ -92,7 +92,7 @@ class BCS_Admin {
 	 */
 	public static function render() {
 		if ( ! current_user_can( 'edit_products' ) ) {
-			wp_die( esc_html__( 'Anda tidak punya akses ke halaman ini.', 'bulk-catalog-studio' ), 403 );
+			wp_die( esc_html__( 'You do not have access to this page.', 'bulk-catalog-studio' ), 403 );
 		}
 
 		$v = self::get_view();
@@ -148,26 +148,26 @@ class BCS_Admin {
 	private static function render_job_list() {
 		$jobs = BCS_Job_Manager::list_jobs( 50 );
 
-		echo '<p>' . esc_html__( 'Semua job Bulk Catalog Studio. Pipeline: parse → duplicate-check → build-plan → approval (token di layar admin) → execute → rollback.', 'bulk-catalog-studio' ) . '</p>';
+		echo '<p>' . esc_html__( 'All Bulk Catalog Studio jobs. Pipeline: parse → duplicate-check → build-plan → approval (token shown on the admin screen) → execute → rollback.', 'bulk-catalog-studio' ) . '</p>';
 
 		echo '<table class="widefat striped"><thead><tr>';
 		echo '<th>' . esc_html__( 'Job', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'Status', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Sumber', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Baris', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Buat / Update / Variasi / Skip / Gagal', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Dibuat', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Source', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Rows', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Created / Updated / Variations / Skipped / Failed', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Created', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'Plan', 'bulk-catalog-studio' ) . '</th>';
 		echo '</tr></thead><tbody>';
 
 		if ( empty( $jobs ) ) {
-			echo '<tr><td colspan="7">' . esc_html__( 'Belum ada job. Jalankan bcs-parse-source dari Claude/MCP.', 'bulk-catalog-studio' ) . '</td></tr>';
+			echo '<tr><td colspan="7">' . esc_html__( 'No jobs yet. Run bcs-parse-source from Claude/MCP.', 'bulk-catalog-studio' ) . '</td></tr>';
 		}
 
 		foreach ( $jobs as $job ) {
 			$badge = self::status_badge( $job['status'] );
 			if ( $job['stale'] ) {
-				$badge .= ' <span class="bcs-pill bcs-pill-warn">' . esc_html__( 'stale — bisa di-resume', 'bulk-catalog-studio' ) . '</span>';
+				$badge .= ' <span class="bcs-pill bcs-pill-warn">' . esc_html__( 'stale — can be resumed', 'bulk-catalog-studio' ) . '</span>';
 			}
 
 			echo '<tr>';
@@ -234,11 +234,11 @@ class BCS_Admin {
 		$job = BCS_Job_Manager::get( $job_id );
 
 		if ( ! $job ) {
-			echo '<div class="notice notice-error"><p>' . esc_html__( 'Job tidak ditemukan.', 'bulk-catalog-studio' ) . '</p></div>';
+			echo '<div class="notice notice-error"><p>' . esc_html__( 'Job not found.', 'bulk-catalog-studio' ) . '</p></div>';
 			return;
 		}
 
-		echo '<p><a href="' . esc_url( self::page_url() ) . '">&larr; ' . esc_html__( 'Semua job', 'bulk-catalog-studio' ) . '</a></p>';
+		echo '<p><a href="' . esc_url( self::page_url() ) . '">&larr; ' . esc_html__( 'All jobs', 'bulk-catalog-studio' ) . '</a></p>';
 
 		echo '<h2>' . esc_html(
 			sprintf(
@@ -249,9 +249,9 @@ class BCS_Admin {
 		) . ' ' . wp_kses_post( self::status_badge( $job['status'] ) ) . '</h2>';
 
 		echo '<table class="widefat striped" style="max-width:820px"><tbody>';
-		echo '<tr><th>' . esc_html__( 'Sumber', 'bulk-catalog-studio' ) . '</th><td>' . esc_html( $job['source_name'] ) . ' <span class="bcs-muted">(' . esc_html( $job['source_type'] ) . ')</span></td></tr>';
+		echo '<tr><th>' . esc_html__( 'Source', 'bulk-catalog-studio' ) . '</th><td>' . esc_html( $job['source_name'] ) . ' <span class="bcs-muted">(' . esc_html( $job['source_type'] ) . ')</span></td></tr>';
 		echo '<tr><th>' . esc_html__( 'Source hash', 'bulk-catalog-studio' ) . '</th><td><code>' . esc_html( $job['source_hash'] ) . '</code></td></tr>';
-		echo '<tr><th>' . esc_html__( 'Total baris', 'bulk-catalog-studio' ) . '</th><td>' . esc_html( number_format_i18n( $job['total_rows'] ) ) . '</td></tr>';
+		echo '<tr><th>' . esc_html__( 'Total rows', 'bulk-catalog-studio' ) . '</th><td>' . esc_html( number_format_i18n( $job['total_rows'] ) ) . '</td></tr>';
 		echo '<tr><th>' . esc_html__( 'Counter', 'bulk-catalog-studio' ) . '</th><td>' . esc_html(
 			sprintf(
 				/* translators: 1-5: counters */
@@ -265,12 +265,12 @@ class BCS_Admin {
 		) . '</td></tr>';
 
 		if ( ! empty( $job['last_error'] ) ) {
-			echo '<tr><th>' . esc_html__( 'Catatan terakhir', 'bulk-catalog-studio' ) . '</th><td>' . esc_html( $job['last_error'] ) . '</td></tr>';
+			echo '<tr><th>' . esc_html__( 'Last note', 'bulk-catalog-studio' ) . '</th><td>' . esc_html( $job['last_error'] ) . '</td></tr>';
 		}
 
 		$notes = isset( $job['mapping']['notes'] ) ? (string) $job['mapping']['notes'] : '';
 		if ( '' !== $notes ) {
-			echo '<tr><th>' . esc_html__( 'Catatan Claude', 'bulk-catalog-studio' ) . '</th><td>' . esc_html( $notes ) . '</td></tr>';
+			echo '<tr><th>' . esc_html__( 'Claude notes', 'bulk-catalog-studio' ) . '</th><td>' . esc_html( $notes ) . '</td></tr>';
 		}
 
 		echo '</tbody></table>';
@@ -281,14 +281,14 @@ class BCS_Admin {
 		echo '<h3>' . esc_html__( 'Plans', 'bulk-catalog-studio' ) . '</h3>';
 		echo '<table class="widefat striped" style="max-width:820px"><thead><tr>';
 		echo '<th>' . esc_html__( 'Plan', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Versi', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Version', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'Status', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Dibuat', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Created', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th></th>';
 		echo '</tr></thead><tbody>';
 
 		if ( empty( $plans ) ) {
-			echo '<tr><td colspan="5">' . esc_html__( 'Belum ada plan (staging v0 tidak dihitung).', 'bulk-catalog-studio' ) . '</td></tr>';
+			echo '<tr><td colspan="5">' . esc_html__( 'No plans yet (staging v0 not counted).', 'bulk-catalog-studio' ) . '</td></tr>';
 		}
 
 		foreach ( $plans as $plan ) {
@@ -303,7 +303,7 @@ class BCS_Admin {
 
 		echo '</tbody></table>';
 
-		echo '<p><a class="button" href="' . esc_url( self::page_url( array( 'view' => 'audit', 'job' => (string) $job_id ) ) ) . '">' . esc_html__( 'Lihat audit log', 'bulk-catalog-studio' ) . '</a></p>';
+		echo '<p><a class="button" href="' . esc_url( self::page_url( array( 'view' => 'audit', 'job' => (string) $job_id ) ) ) . '">' . esc_html__( 'View audit log', 'bulk-catalog-studio' ) . '</a></p>';
 	}
 
 	/**
@@ -338,7 +338,7 @@ class BCS_Admin {
 		$plan_row = BCS_Plan_Builder::get_plan_row( $plan_id );
 
 		if ( ! $plan_row ) {
-			echo '<div class="notice notice-error"><p>' . esc_html__( 'Plan tidak ditemukan.', 'bulk-catalog-studio' ) . '</p></div>';
+			echo '<div class="notice notice-error"><p>' . esc_html__( 'Plan not found.', 'bulk-catalog-studio' ) . '</p></div>';
 			return;
 		}
 
@@ -369,7 +369,7 @@ class BCS_Admin {
 		echo esc_html(
 			sprintf(
 				/* translators: 1-6: summary */
-				__( 'Create simple: %1$d · create variable: %2$d · variasi: %3$d · update: %4$d · skip duplikat: %5$d · total operasi: %6$d', 'bulk-catalog-studio' ),
+				__( 'Create simple: %1$d · create variable: %2$d · variations: %3$d · update: %4$d · skip duplicates: %5$d · total operations: %6$d', 'bulk-catalog-studio' ),
 				isset( $summary['create_simple'] ) ? (int) $summary['create_simple'] : 0,
 				isset( $summary['create_variable'] ) ? (int) $summary['create_variable'] : 0,
 				isset( $summary['create_variations'] ) ? (int) $summary['create_variations'] : 0,
@@ -380,26 +380,26 @@ class BCS_Admin {
 		);
 		echo '</p>';
 
-		echo '<p><code class="bcs-hash">' . esc_html( (string) $plan_row->plan_hash ) . '</code> <span class="bcs-muted">' . esc_html__( 'plan_hash — approval terikat pada nilai ini.', 'bulk-catalog-studio' ) . '</span></p>';
+		echo '<p><code class="bcs-hash">' . esc_html( (string) $plan_row->plan_hash ) . '</code> <span class="bcs-muted">' . esc_html__( 'plan_hash — approval is bound to this value.', 'bulk-catalog-studio' ) . '</span></p>';
 
 		/* --- Tabel operasi --- */
 		$operations = isset( $plan['operations'] ) && is_array( $plan['operations'] ) ? $plan['operations'] : array();
 
-		echo '<h3>' . esc_html__( 'Operasi (materialized diff)', 'bulk-catalog-studio' ) . '</h3>';
+		echo '<h3>' . esc_html__( 'Operations (materialized diff)', 'bulk-catalog-studio' ) . '</h3>';
 		echo '<table class="widefat striped bcs-ops"><thead><tr>';
-		echo '<th>' . esc_html__( 'Baris', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Row', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'Op', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Tipe', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Type', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'SKU', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Nama', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Harga / Stok', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Name', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Price / Stock', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'Var.', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'Target', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'Detail', 'bulk-catalog-studio' ) . '</th>';
 		echo '</tr></thead><tbody>';
 
 		if ( empty( $operations ) ) {
-			echo '<tr><td colspan="9">' . esc_html__( 'Plan tidak memiliki operasi.', 'bulk-catalog-studio' ) . '</td></tr>';
+			echo '<tr><td colspan="9">' . esc_html__( 'Plan has no operations.', 'bulk-catalog-studio' ) . '</td></tr>';
 		}
 
 		foreach ( $operations as $op ) {
@@ -415,7 +415,7 @@ class BCS_Admin {
 			echo '<td>';
 			echo esc_html( (string) ( $payload['regular_price'] ?? '—' ) );
 			if ( ! empty( $payload['sale_price'] ) ) {
-				echo ' <span class="bcs-muted">(diskon ' . esc_html( (string) $payload['sale_price'] ) . ')</span>';
+				echo ' <span class="bcs-muted">(sale ' . esc_html( (string) $payload['sale_price'] ) . ')</span>';
 			}
 			echo ' / ' . esc_html( (string) ( $payload['stock_quantity'] ?? '0' ) );
 			echo '</td>';
@@ -431,12 +431,12 @@ class BCS_Admin {
 			}
 
 			if ( $is_skip ) {
-				echo '<span class="bcs-muted">' . esc_html__( 'Duplikat — tidak diubah.', 'bulk-catalog-studio' ) . '</span>';
+				echo '<span class="bcs-muted">' . esc_html__( 'Duplicate — not modified.', 'bulk-catalog-studio' ) . '</span>';
 			} elseif ( ! empty( $payload['categories'] ) || ! empty( $payload['tags'] ) ) {
-				echo '<details><summary>' . esc_html__( 'kategori & tag', 'bulk-catalog-studio' ) . '</summary>';
+				echo '<details><summary>' . esc_html__( 'categories & tags', 'bulk-catalog-studio' ) . '</summary>';
 				echo '<div class="bcs-detail">';
 				if ( ! empty( $payload['categories'] ) ) {
-					echo '<div><strong>' . esc_html__( 'Kategori:', 'bulk-catalog-studio' ) . '</strong> ' . esc_html( implode( ', ', (array) $payload['categories'] ) ) . '</div>';
+					echo '<div><strong>' . esc_html__( 'Categories:', 'bulk-catalog-studio' ) . '</strong> ' . esc_html( implode( ', ', (array) $payload['categories'] ) ) . '</div>';
 				}
 				if ( ! empty( $payload['tags'] ) ) {
 					echo '<div><strong>' . esc_html__( 'Tag:', 'bulk-catalog-studio' ) . '</strong> ' . esc_html( implode( ', ', (array) $payload['tags'] ) ) . '</div>';
@@ -460,7 +460,7 @@ class BCS_Admin {
 			echo '<p>' . esc_html(
 				sprintf(
 					/* translators: %s: status plan */
-					__( 'Plan berstatus "%s" — approval tidak tersedia lagi.', 'bulk-catalog-studio' ),
+					__( 'Plan status is "%s" — approval is no longer available.', 'bulk-catalog-studio' ),
 					(string) $plan_row->status
 				)
 			) . '</p>';
@@ -468,10 +468,10 @@ class BCS_Admin {
 			return;
 		}
 
-		echo '<p>' . esc_html__( 'Token one-time HANYA ditampilkan di layar ini. Berikan token ke Claude (bcs-approve-plan) ATAU klik tombol Approve langsung di bawah. Token kedaluwarsa 24 jam dan hanya bisa dipakai sekali.', 'bulk-catalog-studio' ) . '</p>';
+		echo '<p>' . esc_html__( 'The one-time token is shown ONLY on this screen. Give the token to Claude (bcs-approve-plan) OR click the Approve button below. Tokens expire after 24 hours and can be used only once.', 'bulk-catalog-studio' ) . '</p>';
 
 		if ( ! $this_manage ) {
-			echo '<p><em>' . esc_html__( 'Anda tidak punya capability manage_woocommerce untuk generate token / approve.', 'bulk-catalog-studio' ) . '</em></p>';
+			echo '<p><em>' . esc_html__( 'You do not have the manage_woocommerce capability required to generate tokens / approve.', 'bulk-catalog-studio' ) . '</em></p>';
 			echo '</div>';
 			return;
 		}
@@ -490,12 +490,12 @@ class BCS_Admin {
 		echo '</form>';
 
 		if ( $token_status['used'] ) {
-			echo '<p><em>' . esc_html__( 'Token terakhir sudah dipakai. Generate token baru untuk approve ulang.', 'bulk-catalog-studio' ) . '</em></p>';
+			echo '<p><em>' . esc_html__( 'The last token has already been used. Generate a new token to approve again.', 'bulk-catalog-studio' ) . '</em></p>';
 		} elseif ( $token_status['has_token'] ) {
 			echo '<p class="bcs-muted">' . esc_html(
 				sprintf(
 					/* translators: 1: waktu kedaluwarsa */
-					__( 'Token sudah pernah di-generate (kedaluwarsa %1$s) tetapi belum dipakai. Generate ulang bila perlu.', 'bulk-catalog-studio' ),
+					__( 'A token was already generated (expires %1$s) but has not been used. Regenerate if needed.', 'bulk-catalog-studio' ),
 					(string) $token_status['expires_at']
 				)
 			) . '</p>';
@@ -503,7 +503,7 @@ class BCS_Admin {
 
 		if ( null !== $token_to_show ) {
 			echo '<div class="bcs-token-reveal">';
-			echo '<p><strong>' . esc_html__( 'Token approval (sekali tampil — catat sekarang):', 'bulk-catalog-studio' ) . '</strong></p>';
+			echo '<p><strong>' . esc_html__( 'Approval token (shown once — copy it now):', 'bulk-catalog-studio' ) . '</strong></p>';
 			echo '<p class="bcs-token-code"><code>' . esc_html( $token_to_show ) . '</code></p>';
 			echo '</div>';
 		}
@@ -514,9 +514,9 @@ class BCS_Admin {
 		echo '<input type="hidden" name="bcs_action" value="approve_plan" />';
 		echo '<input type="hidden" name="plan_id" value="' . esc_attr( (string) $plan_id ) . '" />';
 		echo '<input type="hidden" name="plan_hash" value="' . esc_attr( (string) $plan_row->plan_hash ) . '" />';
-		echo '<p><label for="bcs-token-input">' . esc_html__( 'Token approval:', 'bulk-catalog-studio' ) . '</label> ';
+		echo '<p><label for="bcs-token-input">' . esc_html__( 'Approval token:', 'bulk-catalog-studio' ) . '</label> ';
 		echo '<input type="text" id="bcs-token-input" name="confirmation_token" class="regular-text" autocomplete="off" /></p>';
-		submit_button( __( 'Approve plan ini', 'bulk-catalog-studio' ), 'primary', 'submit_bcs_approve', false );
+		submit_button( __( 'Approve this plan', 'bulk-catalog-studio' ), 'primary', 'submit_bcs_approve', false );
 		echo '</form>';
 
 		echo '</div>';
@@ -542,7 +542,7 @@ class BCS_Admin {
 			check_admin_referer( 'bcs_generate_token' );
 
 			if ( ! current_user_can( 'manage_woocommerce' ) ) {
-				wp_die( esc_html__( 'Butuh capability manage_woocommerce.', 'bulk-catalog-studio' ), 403 );
+				wp_die( esc_html__( 'Requires the manage_woocommerce capability.', 'bulk-catalog-studio' ), 403 );
 			}
 
 			$plan_hash = isset( $_POST['plan_hash'] ) ? sanitize_text_field( wp_unslash( $_POST['plan_hash'] ) ) : '';
@@ -566,7 +566,7 @@ class BCS_Admin {
 				'bcs/admin-screen', 'generate_token', 'ok',
 				sprintf(
 					/* translators: 1: plan id, 2: user id */
-					__( 'Token approval di-generate untuk plan #%1$d oleh user #%2$d.', 'bulk-catalog-studio' ),
+					__( 'Approval token generated for plan #%1$d by user #%2$d.', 'bulk-catalog-studio' ),
 					$plan_id,
 					get_current_user_id()
 				),
@@ -582,7 +582,7 @@ class BCS_Admin {
 			check_admin_referer( 'bcs_approve_plan' );
 
 			if ( ! current_user_can( 'manage_woocommerce' ) ) {
-				wp_die( esc_html__( 'Butuh capability manage_woocommerce.', 'bulk-catalog-studio' ), 403 );
+				wp_die( esc_html__( 'Requires the manage_woocommerce capability.', 'bulk-catalog-studio' ), 403 );
 			}
 
 			$plan_hash = isset( $_POST['plan_hash'] ) ? sanitize_text_field( wp_unslash( $_POST['plan_hash'] ) ) : '';
@@ -626,7 +626,7 @@ class BCS_Admin {
 					'bcs/approve-plan', 'approve_plan', 'ok',
 					sprintf(
 						/* translators: 1: plan id, 2: user id */
-						__( 'Plan #%1$d diapprove langsung dari dashboard oleh user #%2$d.', 'bulk-catalog-studio' ),
+						__( 'Plan #%1$d approved directly from the dashboard by user #%2$d.', 'bulk-catalog-studio' ),
 						$plan_id,
 						get_current_user_id()
 					),
@@ -637,14 +637,14 @@ class BCS_Admin {
 				wp_safe_redirect(
 					add_query_arg(
 						'bcs_notice',
-						rawurlencode( __( 'Plan approved. Eksekusi bisa dijalankan lewat bcs-execute-batch (MCP).', 'bulk-catalog-studio' ) ),
+						rawurlencode( __( 'Plan approved. Execution can be run via bcs-execute-batch (MCP).', 'bulk-catalog-studio' ) ),
 						self::page_url( array( 'view' => 'plan', 'plan' => (string) $plan_id ) )
 					)
 				);
 				exit;
 			}
 
-			$error_msg = is_wp_error( $consume ) ? $consume->get_error_message() : __( 'Gagal menandai plan approved.', 'bulk-catalog-studio' );
+			$error_msg = is_wp_error( $consume ) ? $consume->get_error_message() : __( 'Failed to mark the plan as approved.', 'bulk-catalog-studio' );
 			wp_safe_redirect(
 				add_query_arg(
 					'bcs_error',
@@ -667,14 +667,14 @@ class BCS_Admin {
 	 */
 	private static function render_before_after( array $before, array $payload ) {
 		$fields = array(
-			'name'          => __( 'Nama', 'bulk-catalog-studio' ),
+			'name'          => __( 'Name', 'bulk-catalog-studio' ),
 			'sku'           => __( 'SKU', 'bulk-catalog-studio' ),
-			'regular_price' => __( 'Harga reguler', 'bulk-catalog-studio' ),
-			'sale_price'    => __( 'Harga diskon', 'bulk-catalog-studio' ),
-			'stock_quantity' => __( 'Stok', 'bulk-catalog-studio' ),
-			'description'   => __( 'Deskripsi', 'bulk-catalog-studio' ),
+			'regular_price' => __( 'Regular price', 'bulk-catalog-studio' ),
+			'sale_price'    => __( 'Sale price', 'bulk-catalog-studio' ),
+			'stock_quantity' => __( 'Stock', 'bulk-catalog-studio' ),
+			'description'   => __( 'Description', 'bulk-catalog-studio' ),
 			'status'        => __( 'Status', 'bulk-catalog-studio' ),
-			'weight'        => __( 'Berat', 'bulk-catalog-studio' ),
+			'weight'        => __( 'Weight', 'bulk-catalog-studio' ),
 		);
 
 		$html = '<table class="widefat striped bcs-ba"><thead><tr>';
@@ -732,12 +732,13 @@ class BCS_Admin {
 		$job = BCS_Job_Manager::get( $job_id );
 
 		if ( ! $job ) {
-			echo '<div class="notice notice-error"><p>' . esc_html__( 'Job tidak ditemukan.', 'bulk-catalog-studio' ) . '</p></div>';
+			echo '<div class="notice notice-error"><p>' . esc_html__( 'Job not found.', 'bulk-catalog-studio' ) . '</p></div>';
 			return;
 		}
 
 		$limit  = 100;
-		$offset = max( 0, (int) $paged ) * $limit;
+		$page   = max( 0, (int) $paged );
+		$offset = $page * $limit;
 
 		$level = isset( $_GET['level'] ) ? sanitize_key( wp_unslash( $_GET['level'] ) ) : 'all'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- filter read-only.
 		if ( ! in_array( $level, array( 'all', 'call', 'row' ), true ) ) {
@@ -745,6 +746,18 @@ class BCS_Admin {
 		}
 
 		$result = BCS_Audit_Logger::query( $job_id, $level, $limit, $offset );
+
+		// Gate 4 (UI test): ?paged= di luar jangkauan (URL lama / data menyusut)
+		// sebelumnya menampilkan tabel kosong tanpa pagination (total <= limit
+		// tidak merender link) — tidak ada cara kembali. Clamp sekali ke
+		// halaman valid terakhir lalu query ulang.
+		$clamped = false;
+		if ( empty( $result['entries'] ) && $result['total'] > 0 && $page > 0 ) {
+			$page    = (int) floor( ( $result['total'] - 1 ) / $limit );
+			$offset  = $page * $limit;
+			$result  = BCS_Audit_Logger::query( $job_id, $level, $limit, $offset );
+			$clamped = true;
+		}
 
 		echo '<p><a href="' . esc_url( self::page_url( array( 'view' => 'job', 'job' => (string) $job_id ) ) ) . '">&larr; ' . esc_html(
 			sprintf(
@@ -754,7 +767,7 @@ class BCS_Admin {
 			)
 		) . '</a></p>';
 
-		echo '<h2>' . esc_html__( 'Audit log', 'bulk-catalog-studio' ) . ' <span class="bcs-muted">(' . esc_html( number_format_i18n( $result['total'] ) ) . ' ' . esc_html__( 'entri', 'bulk-catalog-studio' ) . ')</span></h2>';
+		echo '<h2>' . esc_html__( 'Audit log', 'bulk-catalog-studio' ) . ' <span class="bcs-muted">(' . esc_html( number_format_i18n( $result['total'] ) ) . ' ' . esc_html__( 'entries', 'bulk-catalog-studio' ) . ')</span></h2>';
 
 		// Filter level.
 		echo '<p>';
@@ -767,22 +780,27 @@ class BCS_Admin {
 		}
 		echo '</p>';
 
+		// Gate 4 (UI test): notice kecil bila halaman di-clamp.
+		if ( $clamped ) {
+			echo '<div class="notice notice-info"><p>' . esc_html__( 'Page out of range — showing the last page.', 'bulk-catalog-studio' ) . '</p></div>';
+		}
+
 		echo '<table class="widefat striped"><thead><tr>';
 		echo '<th>' . esc_html__( 'ID', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Waktu', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Time', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'Level', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'Ability', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Aksi', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Baris', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Action', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Row', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'SKU', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Produk', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Product', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'Status', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Aktor', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Pesan', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Actor', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Message', 'bulk-catalog-studio' ) . '</th>';
 		echo '</tr></thead><tbody>';
 
 		if ( empty( $result['entries'] ) ) {
-			echo '<tr><td colspan="11">' . esc_html__( 'Tidak ada entri.', 'bulk-catalog-studio' ) . '</td></tr>';
+			echo '<tr><td colspan="11">' . esc_html__( 'No entries found.', 'bulk-catalog-studio' ) . '</td></tr>';
 		}
 
 		foreach ( $result['entries'] as $entry ) {
@@ -805,15 +823,26 @@ class BCS_Admin {
 
 		// Pagination.
 		if ( $result['total'] > $limit ) {
-			$page = max( 0, (int) $paged );
 			echo '<p>';
 			if ( $page > 0 ) {
-				$prev = add_query_arg( 'paged', (string) ( $page - 1 ), self::page_url( array( 'view' => 'audit', 'job' => (string) $job_id ) ) );
-				echo '<a class="button" href="' . esc_url( $prev ) . '">&larr; ' . esc_html__( 'Sebelumnya', 'bulk-catalog-studio' ) . '</a> ';
+				$prev = add_query_arg(
+					array(
+						'level' => $level,
+						'paged' => (string) ( $page - 1 ),
+					),
+					self::page_url( array( 'view' => 'audit', 'job' => (string) $job_id ) )
+				);
+				echo '<a class="button" href="' . esc_url( $prev ) . '">&larr; ' . esc_html__( 'Previous', 'bulk-catalog-studio' ) . '</a> ';
 			}
 			if ( ( $page + 1 ) * $limit < $result['total'] ) {
-				$next = add_query_arg( 'paged', (string) ( $page + 1 ), self::page_url( array( 'view' => 'audit', 'job' => (string) $job_id ) ) );
-				echo '<a class="button" href="' . esc_url( $next ) . '">' . esc_html__( 'Berikutnya', 'bulk-catalog-studio' ) . ' &rarr;</a>';
+				$next = add_query_arg(
+					array(
+						'level' => $level,
+						'paged' => (string) ( $page + 1 ),
+					),
+					self::page_url( array( 'view' => 'audit', 'job' => (string) $job_id ) )
+				);
+				echo '<a class="button" href="' . esc_url( $next ) . '">' . esc_html__( 'Next', 'bulk-catalog-studio' ) . ' &rarr;</a>';
 			}
 			echo '</p>';
 		}

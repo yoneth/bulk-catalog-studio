@@ -99,7 +99,7 @@ class BCS_MCP_Server {
 	 * @return string
 	 */
 	public static function description() {
-		return __( 'Custom MCP server Bulk Catalog Studio — 8 ability bcs/* sebagai tool individual pada endpoint /wp-json/bcs-mcp/mcp (tanpa route default yang ter-intercept Novamira).', 'bulk-catalog-studio' );
+		return __( 'Bulk Catalog Studio custom MCP server — the 8 bcs/* abilities as individual tools on the /wp-json/bcs-mcp/mcp endpoint (no dependency on the Novamira-intercepted default route).', 'bulk-catalog-studio' );
 	}
 
 	/**
@@ -209,7 +209,7 @@ class BCS_MCP_Server {
 		// berjalan lebih dulu; registrasi manual di luar hook itu ditolak core).
 		if ( ! self::abilities_registered() ) {
 			self::$dependency_missing         = true;
-			self::$dependency_missing_reason = __( 'Abilities API belum berisi 8 ability bcs/* — server MCP kustom tidak didaftarkan.', 'bulk-catalog-studio' );
+			self::$dependency_missing_reason = __( 'The Abilities API does not contain the 8 bcs/* abilities yet — the custom MCP server was not registered.', 'bulk-catalog-studio' );
 
 			return false;
 		}
@@ -251,7 +251,7 @@ class BCS_MCP_Server {
 				self::$dependency_missing         = true;
 				self::$dependency_missing_reason = sprintf(
 					/* translators: %s: nama class */
-					__( 'Class MCP Adapter tidak ditemukan: %1$s. Aktifkan plugin mcp-adapter agar endpoint /wp-json/bcs-mcp/mcp aktif.', 'bulk-catalog-studio' ),
+					__( 'MCP Adapter class not found: %1$s. Activate the mcp-adapter plugin to enable the /wp-json/bcs-mcp/mcp endpoint.', 'bulk-catalog-studio' ),
 					$class
 				);
 

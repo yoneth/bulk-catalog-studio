@@ -9,37 +9,37 @@ Stable tag: 1.0.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Mengubah CSV / Google Sheet export / rows hasil prompt menjadi produk WooCommerce native via WordPress Abilities API + MCP, dengan pipeline approval manusia.
+Turns CSV / Google Sheets exports / prompt-produced rows into native WooCommerce products via the WordPress Abilities API + MCP, with a mandatory human approval pipeline.
 
 == Description ==
 
-AI Bulk Catalog Studio (BCS) mendaftarkan 8 ability (`bcs/*`) ke WordPress Abilities API yang otomatis terekspos sebagai MCP tools oleh MCP Adapter resmi (default server):
+AI Bulk Catalog Studio (BCS) registers 8 abilities (`bcs/*`) with the WordPress Abilities API and exposes them as individual MCP tools through its isolated custom server, built with the official MCP Adapter:
 
-1. `bcs/parse-source` — parse CSV inline / attachment / URL export CSV publik Google Sheets → job baru berstatus `parsed`.
-2. `bcs/check-duplicates` — deteksi duplikat intra-batch dan vs katalog (SKU + nama normalized).
-3. `bcs/build-plan` — plan eksekusi materialized (create/update/skip + payload final + snapshot `before`).
-4. `bcs/approve-plan` — gerbang approval: token one-time yang HANYA tampil di layar admin WP.
-5. `bcs/execute-batch` — eksekusi plan via WC_Product CRUD (chunk 10 operasi, heartbeat, dry_run, resume idempotent).
-6. `bcs/job-status` — list job terbaru / detail satu job (termasuk staleness).
-7. `bcs/rollback-batch` — trash produk baru (soft) + restore snapshot before untuk update.
-8. `bcs/audit-log` — jejak audit level call + row per job.
+1. `bcs/parse-source` — parse inline CSV / attachment / public Google Sheets CSV export URL → new job with status `parsed`.
+2. `bcs/check-duplicates` — detect intra-batch duplicates and rows matching the existing catalog (SKU + normalized name).
+3. `bcs/build-plan` — materialized execution plan (create/update/skip + final payload + `before` snapshot).
+4. `bcs/approve-plan` — approval gate: one-time token shown ONLY on the WP admin screen.
+5. `bcs/execute-batch` — execute the plan via WC_Product CRUD (chunks of 10 operations, heartbeat, dry_run, idempotent resume).
+6. `bcs/job-status` — list recent jobs / details of one job (including staleness).
+7. `bcs/rollback-batch` — trash new products (soft) + restore the before snapshot for updates.
+8. `bcs/audit-log` — call + row level audit trail per job.
 
-Pipeline penuh: **parse → duplicate-check → build-plan → HUMAN APPROVAL → execute → (opsional) rollback**. Tidak ada aksi tulis MCP tanpa approval.
+Full pipeline: **parse → duplicate-check → build-plan → HUMAN APPROVAL → execute → (optional) rollback**. No MCP write action happens without approval.
 
-Produk hasil BCS 100% native WooCommerce (CPT `product`, `product_variation`, taxonomy `product_cat`, `product_tag`, `pa_*`) — editable dari admin WooCommerce biasa tanpa plugin aktif pun.
+Products created by BCS are 100% native WooCommerce (`product`, `product_variation` CPTs, `product_cat`, `product_tag`, `pa_*` taxonomies) — editable from the regular WooCommerce admin even with the plugin deactivated.
 
 == Installation ==
 
-1. Upload folder `bulk-catalog-studio` ke `/wp-content/plugins/`.
-2. Pastikan WooCommerce aktif, plugin **mcp-adapter** aktif, dan WordPress ≥ 6.9.
-3. Aktifkan plugin melalui menu Plugins. Tabel `bcs_jobs`, `bcs_plans`, `bcs_audit` dibuat otomatis.
-4. Custom MCP server aktif di **`/wp-json/bcs-mcp/mcp`** — endpoint default `/wp-json/mcp/mcp-adapter-default-server` tidak dipakai (ter-intercept Novamira di server target).
-5. Buat user khusus MCP (mis. `mcp-catalog`) dengan capability: `read`, `edit_products`, `manage_product_terms`, `manage_woocommerce`. Bukan administrator.
-6. Buat Application Password untuk user tersebut (Users → Profile → Application Passwords).
+1. Upload the `bulk-catalog-studio` folder to `/wp-content/plugins/`.
+2. Make sure WooCommerce is active, the **mcp-adapter** plugin is active, and WordPress ≥ 6.9.
+3. Activate the plugin through the Plugins menu. The `bcs_jobs`, `bcs_plans`, `bcs_audit` tables are created automatically.
+4. The custom MCP server is live at **`/wp-json/bcs-mcp/mcp`** — the default `/wp-json/mcp/mcp-adapter-default-server` endpoint is not used (intercepted by Novamira on the target server).
+5. Create a dedicated MCP user (e.g. `mcp-catalog`) with the capabilities: `read`, `edit_products`, `manage_product_terms`, `manage_woocommerce`. Not an administrator.
+6. Create an Application Password for that user (Users → Profile → Application Passwords).
 
 == Connecting Claude ==
 
-Konfigurasi `mcpServers` (Claude Desktop / Claude Code), memakai proxy resmi `@automattic/mcp-wordpress-remote`:
+Configure `mcpServers` (Claude Desktop / Claude Code) using the official `@automattic/mcp-wordpress-remote` proxy:
 
     {
       "mcpServers": {
@@ -56,46 +56,48 @@ Konfigurasi `mcpServers` (Claude Desktop / Claude Code), memakai proxy resmi `@a
       }
     }
 
-Catatan penting:
-- `OAUTH_ENABLED=false` wajib agar proxy memakai Application Password (bukan OAuth).
-- Endpoint utama adalah custom server BCS: `https://<domain>/wp-json/bcs-mcp/mcp`. Endpoint default `/wp-json/mcp/...` TIDAK dipakai (ter-intercept Novamira di server target) — domain telanjang juga harus dihindari (resolve ke legacy `wordpress-mcp` yang deprecated).
-- `WP_API_USERNAME` = username login WP (bukan email); `WP_API_PASSWORD` = Application Password (bukan password akun, bukan REST API key WooCommerce).
-- Pada custom server ini 8 tool BCS tampil individual di `tools/list` (`bcs-parse-source`, dst.).
-- Transport permission server kustom menuntut `manage_woocommerce` (plus re-check per ability).
+Important notes:
+- `OAUTH_ENABLED=false` is required so the proxy uses the Application Password (not OAuth).
+- The primary endpoint is the BCS custom server: `https://<domain>/wp-json/bcs-mcp/mcp`. The default `/wp-json/mcp/...` endpoint is NOT used (intercepted by Novamira on the target server) — the bare domain must also be avoided (it resolves to the deprecated legacy `wordpress-mcp`).
+- `WP_API_USERNAME` = WP login username (not an email); `WP_API_PASSWORD` = Application Password (not the account password, not a WooCommerce REST API key).
+- On this custom server the 8 BCS tools appear individually in `tools/list` (`bcs-parse-source`, etc.).
+- The custom server transport permission requires `manage_woocommerce` (plus a per-ability re-check).
 
-== Contoh alur 1 job ==
+== Example flow for one job ==
 
-1. Claude memanggil `bcs-parse-source` (CSV 30 produk fashion: 20 simple + 10 variable ukuran×warna ≈ 60 variasi).
-2. Claude memanggil `bcs-check-duplicates` → 2 duplikat ditemukan.
-3. Manusia memutuskan: baris 5 di-update, baris 19 di-skip. Claude memanggil `bcs-build-plan` dengan `on_duplicate` + `row_overrides`.
-4. Manusia membuka **Bulk Catalog → Job → Diff preview** di wp-admin, memeriksa diff, klik **Generate token approval** → token `BCS-XXXXX` tampil SEKALI.
-5. Claude memanggil `bcs-approve-plan` dengan token dari manusia (atau manusia klik tombol Approve).
-6. Claude memanggil `bcs-execute-batch` → produk + variasi dibuat (WC_Product CRUD).
-7. Claude verifikasi via `bcs-job-status` + `bcs-audit-log`.
-8. Bila ada masalah: `bcs-rollback-batch` dengan `confirm: true`.
+1. Claude calls `bcs-parse-source` (a 30-product fashion CSV: 20 simple + 10 variable size×color ≈ 60 variations).
+2. Claude calls `bcs-check-duplicates` → 2 duplicates found.
+3. A human decides: row 5 is updated, row 19 is skipped. Claude calls `bcs-build-plan` with `on_duplicate` + `row_overrides`.
+4. A human opens **Bulk Catalog → Job → Diff preview** in wp-admin, reviews the diff, clicks **Generate token approval** → token `BCS-XXXXX` is shown ONCE.
+5. Claude calls `bcs-approve-plan` with the token from the human (or the human clicks the Approve button).
+6. Claude calls `bcs-execute-batch` → products + variations are created (WC_Product CRUD).
+7. Claude verifies via `bcs-job-status` + `bcs-audit-log`.
+8. If something went wrong: `bcs-rollback-batch` with `confirm: true`.
 
 == Frequently Asked Questions ==
 
-= Apakah plugin menulis produk tanpa approval? =
+= Does the plugin write products without approval? =
 
-Tidak. `bcs/execute-batch` menolak plan yang belum `approved`. Approval menuntut token one-time yang hanya bisa dilihat manusia di layar admin (halaman diff), terikat `plan_hash`, kedaluwarsa 24 jam, single-use.
+No. `bcs/execute-batch` rejects plans that are not `approved` yet. Approval requires a one-time token only a human can see on the admin screen (diff page), bound to the `plan_hash`, expiring after 24 hours, single-use.
 
-= Apa yang terjadi saat deactivate? =
+= What happens on deactivation? =
 
-Tidak ada data hilang (AC-7): tabel dan settings dipertahankan. Hanya uninstall (delete plugin) yang drop tabel + options `bcs_*`. Produk tidak pernah disentuh uninstall.
+No data is lost (AC-7): tables and settings are preserved. Only uninstall (delete plugin) drops the tables + `bcs_*` options. Products are never touched by uninstall.
 
-= Format CSV yang didukung? =
+= Which CSV format is supported? =
 
-Delimiter koma / titik-koma / tab; baris header opsional dengan `column_mapping`; multi-nilai produk variabel dipisah `|` (opsi atribut, SKU variasi, harga variasi, stok variasi paralel). Mode URL hanya menerima export CSV publik dari docs.google.com (batas SSRF). Batas V1: 500 baris/job (default setting 100), inline CSV 2 MB, attachment 10 MB.
+Comma / semicolon / tab delimiters; optional header row with `column_mapping`; multi-values for variable products are pipe-separated `|` (attribute options, variation SKUs, variation prices, variation stock in parallel). URL mode only accepts public CSV exports from docs.google.com (SSRF guard). V1 limits: 500 rows/job (default setting 100), 2 MB inline CSV, 10 MB attachment.
 
 == Changelog ==
 
 = 1.0.0 =
-* Rilis awal V1 sesuai spec `docs/spec/bulk-catalog-studio.md` + keputusan gate1.
-* 8 ability `bcs/*` (Abilities API + MCP Adapter, `meta.mcp.public`).
-* Pipeline approval token one-time, rollback snapshot, audit per baris.
-* Gambar: `attachment_id_only` (sideload ditunda V1.1 — keputusan gate1 #4).
-* Retur QA-1: update tidak menyentuh status/stok tak-dikirim; rollback
-  job-scoped dari audit; konsumsi token atomik single-use; SSRF guard (host
-  hanya docs.google.com, redirect off, blokir IP privat); rebuild plan
-  (superseded); resume tanpa double-count; konversi encoding CSV ke UTF-8.
+* Initial V1 release per spec `docs/spec/bulk-catalog-studio.md` + gate1 decisions.
+* 8 `bcs/*` abilities (Abilities API + MCP Adapter, `meta.mcp.public`).
+* One-time approval token pipeline, snapshot rollback, per-row audit.
+* Images: `attachment_id_only` (sideload postponed to V1.1 — gate1 decision #4).
+* QA-1 rework: updates never touch unsent status/stock; job-scoped rollback;
+  atomic single-use token consumption; SSRF guard (docs.google.com-only host,
+  redirects off, private IP blocks); plan rebuild (superseded); resume without
+  double-counting; CSV encoding conversion to UTF-8.
+* Gate 4: audit pagination clamps out-of-range pages to the last valid page;
+  all user-facing strings are English (i18n-ready with the `bulk-catalog-studio` text domain).

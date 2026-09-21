@@ -58,7 +58,7 @@ class BCS_Catalog_Writer {
 	 */
 	public static function guard() {
 		if ( ! class_exists( 'WC_Product' ) || ! function_exists( 'wc_get_product' ) ) {
-			return new WP_Error( 'bcs_missing_woocommerce', __( 'WooCommerce tidak aktif — ability tulis katalog ditolak (guard class_exists WC_Product).', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_missing_woocommerce', __( 'WooCommerce is not active — catalog write abilities are rejected (class_exists WC_Product guard).', 'bulk-catalog-studio' ) );
 		}
 
 		return true;
@@ -76,7 +76,7 @@ class BCS_Catalog_Writer {
 	 */
 	public static function validate_operation( array $op ) {
 		if ( empty( $op['op'] ) ) {
-			return new WP_Error( 'bcs_invalid_plan', __( 'Operasi plan tidak memiliki field op.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_invalid_plan', __( 'Plan operation is missing the op field.', 'bulk-catalog-studio' ) );
 		}
 
 		if ( 'skip_duplicate' === $op['op'] ) {
@@ -87,10 +87,10 @@ class BCS_Catalog_Writer {
 			$payload = is_array( $op['payload'] ?? null ) ? $op['payload'] : array();
 
 			if ( '' === trim( (string) ( $payload['name'] ?? '' ) ) ) {
-				return new WP_Error( 'bcs_validation', __( 'Payload create tanpa nama.', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_validation', __( 'Create payload has no name.', 'bulk-catalog-studio' ) );
 			}
 			if ( '' === trim( (string) ( $payload['sku'] ?? '' ) ) ) {
-				return new WP_Error( 'bcs_validation', __( 'Payload create tanpa SKU.', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_validation', __( 'Create payload has no SKU.', 'bulk-catalog-studio' ) );
 			}
 
 			// SKU harus bebas (verifikasi ulang saat eksekusi juga berjalan).
@@ -100,7 +100,7 @@ class BCS_Catalog_Writer {
 					'bcs_duplicate_sku',
 					sprintf(
 						/* translators: 1: SKU, 2: product ID */
-						__( 'SKU %1$s sudah dipakai produk #%2$d.', 'bulk-catalog-studio' ),
+						__( 'SKU %1$s is already used by product #%2$d.', 'bulk-catalog-studio' ),
 						$payload['sku'],
 						(int) $existing
 					)
@@ -112,7 +112,7 @@ class BCS_Catalog_Writer {
 			foreach ( (array) ( $payload['variations'] ?? array() ) as $var ) {
 				$vsku = trim( (string) ( $var['sku'] ?? '' ) );
 				if ( '' === $vsku ) {
-					return new WP_Error( 'bcs_validation', __( 'Ada variasi tanpa SKU.', 'bulk-catalog-studio' ) );
+					return new WP_Error( 'bcs_validation', __( 'A variation is missing a SKU.', 'bulk-catalog-studio' ) );
 				}
 				$key = strtolower( $vsku );
 				if ( isset( $seen_variation_skus[ $key ] ) ) {
@@ -120,7 +120,7 @@ class BCS_Catalog_Writer {
 						'bcs_duplicate_sku',
 						sprintf(
 							/* translators: %s: SKU variasi */
-							__( 'SKU variasi %s duplikat di dalam payload.', 'bulk-catalog-studio' ),
+							__( 'Variation SKU %s is duplicated within the payload.', 'bulk-catalog-studio' ),
 							$vsku
 						)
 					);
@@ -133,7 +133,7 @@ class BCS_Catalog_Writer {
 						'bcs_duplicate_sku',
 						sprintf(
 							/* translators: 1: SKU variasi, 2: product ID */
-							__( 'SKU variasi %1$s sudah dipakai produk #%2$d.', 'bulk-catalog-studio' ),
+							__( 'Variation SKU %1$s is already used by product #%2$d.', 'bulk-catalog-studio' ),
 							$vsku,
 							(int) $existing_var
 						)
@@ -153,7 +153,7 @@ class BCS_Catalog_Writer {
 		if ( 'update_product' === $op['op'] ) {
 			$target = absint( $op['target_product_id'] ?? 0 );
 			if ( $target < 1 ) {
-				return new WP_Error( 'bcs_validation', __( 'Operasi update tanpa target_product_id.', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_validation', __( 'Update operation has no target_product_id.', 'bulk-catalog-studio' ) );
 			}
 
 			$product = wc_get_product( $target );
@@ -162,7 +162,7 @@ class BCS_Catalog_Writer {
 					'bcs_validation',
 					sprintf(
 						/* translators: %d: product ID */
-						__( 'Produk target #%d tidak ditemukan.', 'bulk-catalog-studio' ),
+						__( 'Target product #%d not found.', 'bulk-catalog-studio' ),
 						$target
 					)
 				);
@@ -175,7 +175,7 @@ class BCS_Catalog_Writer {
 			'bcs_invalid_plan',
 			sprintf(
 				/* translators: %s: nama op */
-				__( 'Jenis operasi plan tidak dikenal: %s', 'bulk-catalog-studio' ),
+				__( 'Unknown plan operation type: %s', 'bulk-catalog-studio' ),
 				sanitize_text_field( (string) $op['op'] )
 			)
 		);
@@ -198,7 +198,7 @@ class BCS_Catalog_Writer {
 				'bcs_validation',
 				sprintf(
 					/* translators: %d: attachment ID */
-					__( 'Attachment #%d tidak valid (bukan post_type attachment).', 'bulk-catalog-studio' ),
+					__( 'Attachment #%d is invalid (not post_type attachment).', 'bulk-catalog-studio' ),
 					absint( $image['attachment_id'] )
 				)
 			);
@@ -243,7 +243,7 @@ class BCS_Catalog_Writer {
 			'bcs_invalid_plan',
 			sprintf(
 				/* translators: %s: nama op */
-				__( 'Jenis operasi plan tidak dikenal: %s', 'bulk-catalog-studio' ),
+				__( 'Unknown plan operation type: %s', 'bulk-catalog-studio' ),
 				sanitize_text_field( (string) $op['op'] )
 			)
 		);
@@ -268,7 +268,7 @@ class BCS_Catalog_Writer {
 				'bcs_duplicate_sku',
 				sprintf(
 					/* translators: 1: SKU, 2: product ID */
-					__( 'SKU %1$s sudah dipakai produk #%2$d (terdeteksi saat eksekusi).', 'bulk-catalog-studio' ),
+					__( 'SKU %1$s is already used by product #%2$d (detected during execution).', 'bulk-catalog-studio' ),
 					(string) $payload['sku'],
 					(int) $existing
 				)
@@ -297,7 +297,7 @@ class BCS_Catalog_Writer {
 		$product_id = $product->save();
 
 		if ( ! $product_id ) {
-			return new WP_Error( 'bcs_write_failed', __( 'Gagal menyimpan produk baru.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_write_failed', __( 'Failed to save the new product.', 'bulk-catalog-studio' ) );
 		}
 
 		// Meta plugin idempotency (whitelist §5.5.2).
@@ -358,7 +358,7 @@ class BCS_Catalog_Writer {
 					'bcs_duplicate_sku',
 					sprintf(
 						/* translators: 1: SKU variasi, 2: product ID */
-						__( 'SKU variasi %1$s sudah dipakai produk #%2$d.', 'bulk-catalog-studio' ),
+						__( 'Variation SKU %1$s is already used by product #%2$d.', 'bulk-catalog-studio' ),
 						$sku,
 						(int) $existing
 					)
@@ -378,7 +378,7 @@ class BCS_Catalog_Writer {
 		}
 
 		if ( empty( $attributes ) ) {
-			return new WP_Error( 'bcs_validation', __( 'Variasi tanpa atribut.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_validation', __( 'Variation has no attributes.', 'bulk-catalog-studio' ) );
 		}
 
 		$variation = new WC_Product_Variation();
@@ -406,7 +406,7 @@ class BCS_Catalog_Writer {
 
 		$variation_id = $variation->save();
 		if ( ! $variation_id ) {
-			return new WP_Error( 'bcs_write_failed', __( 'Gagal menyimpan variasi.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_write_failed', __( 'Failed to save the variation.', 'bulk-catalog-studio' ) );
 		}
 
 		// Meta plugin pada variasi juga (untuk rollback & pelacakan).
@@ -436,7 +436,7 @@ class BCS_Catalog_Writer {
 				'bcs_not_found',
 				sprintf(
 					/* translators: %d: product ID */
-					__( 'Produk target #%d tidak ditemukan saat eksekusi.', 'bulk-catalog-studio' ),
+					__( 'Target product #%d not found during execution.', 'bulk-catalog-studio' ),
 					$target
 				)
 			);
@@ -444,7 +444,7 @@ class BCS_Catalog_Writer {
 
 		// Whitelist post type (spec §5.5.3).
 		if ( ! in_array( $product->get_type(), array( 'simple', 'variable', 'external', 'grouped' ), true ) ) {
-			return new WP_Error( 'bcs_invalid_target', __( 'Target bukan produk WooCommerce yang valid.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_invalid_target', __( 'Target is not a valid WooCommerce product.', 'bulk-catalog-studio' ) );
 		}
 
 		$payload = is_array( $op['payload'] ?? null ) ? $op['payload'] : array();
@@ -457,7 +457,7 @@ class BCS_Catalog_Writer {
 					'bcs_duplicate_sku',
 					sprintf(
 						/* translators: 1: SKU, 2: product ID */
-						__( 'SKU %1$s sudah dipakai produk #%2$d.', 'bulk-catalog-studio' ),
+						__( 'SKU %1$s is already used by product #%2$d.', 'bulk-catalog-studio' ),
 						(string) $payload['sku'],
 						(int) $existing
 					)
@@ -669,14 +669,14 @@ class BCS_Catalog_Writer {
 				'bcs_taxonomy_forbidden',
 				sprintf(
 					/* translators: %s: nama taxonomy */
-					__( 'Taxonomy "%s" berada di luar whitelist (product_cat, product_tag, pa_*).', 'bulk-catalog-studio' ),
+					__( 'Taxonomy "%s" is outside the whitelist (product_cat, product_tag, pa_*).', 'bulk-catalog-studio' ),
 					$taxonomy
 				)
 			);
 		}
 
 		if ( '' === $name ) {
-			return new WP_Error( 'bcs_validation', __( 'Nama term kosong.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_validation', __( 'Term name is empty.', 'bulk-catalog-studio' ) );
 		}
 
 		// Untuk pa_* global: pastikan attribute taxonomy terdaftar dulu.
@@ -736,7 +736,7 @@ class BCS_Catalog_Writer {
 	 */
 	public static function ensure_global_attribute( $taxonomy ) {
 		if ( ! function_exists( 'wc_attribute_taxonomy_id_by_name' ) || ! function_exists( 'wc_create_attribute' ) ) {
-			return new WP_Error( 'bcs_missing_woocommerce', __( 'Fungsi atribut WooCommerce tidak tersedia.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_missing_woocommerce', __( 'WooCommerce attribute functions are unavailable.', 'bulk-catalog-studio' ) );
 		}
 
 		$slug = self::pa_slug( $taxonomy );
@@ -882,7 +882,7 @@ class BCS_Catalog_Writer {
 				'bcs_validation',
 				sprintf(
 					/* translators: %s: SKU */
-					__( 'Produk variable %s tidak punya atribut valid.', 'bulk-catalog-studio' ),
+					__( 'Variable product %s has no valid attributes.', 'bulk-catalog-studio' ),
 					(string) $sku
 				)
 			);
@@ -911,7 +911,7 @@ class BCS_Catalog_Writer {
 				'bcs_validation',
 				sprintf(
 					/* translators: %d: attachment ID */
-					__( 'Attachment #%d tidak valid — gambar dilewati.', 'bulk-catalog-studio' ),
+					__( 'Attachment #%d is invalid — image skipped.', 'bulk-catalog-studio' ),
 					$attachment_id
 				)
 			);
@@ -1026,12 +1026,12 @@ class BCS_Catalog_Writer {
 	public static function trash_product( $product_id ) {
 		$product = wc_get_product( absint( $product_id ) );
 		if ( ! $product instanceof WC_Product ) {
-			return new WP_Error( 'bcs_not_found', __( 'Produk tidak ditemukan untuk trash.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Product not found for trash.', 'bulk-catalog-studio' ) );
 		}
 
 		// Whitelist post type.
 		if ( ! in_array( $product->get_type(), array( 'simple', 'variable', 'external', 'grouped' ), true ) ) {
-			return new WP_Error( 'bcs_invalid_target', __( 'Target bukan produk WooCommerce yang valid.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_invalid_target', __( 'Target is not a valid WooCommerce product.', 'bulk-catalog-studio' ) );
 		}
 
 		$variations_trashed = 0;
@@ -1064,7 +1064,7 @@ class BCS_Catalog_Writer {
 	public static function restore_from_snapshot( $product_id, array $before ) {
 		$product = wc_get_product( absint( $product_id ) );
 		if ( ! $product instanceof WC_Product ) {
-			return new WP_Error( 'bcs_not_found', __( 'Produk tidak ditemukan untuk restore.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Product not found for restore.', 'bulk-catalog-studio' ) );
 		}
 
 		if ( isset( $before['name'] ) ) {

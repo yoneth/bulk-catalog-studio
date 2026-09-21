@@ -24,8 +24,8 @@ jget() { printf '%s' "$1" | jq -r "$2 // empty" 2>/dev/null || true; }
 
 job_id="${BCS_JOB_ID:-$(bcs_state_get '.job_id // ""')}"
 plan_id="${BCS_PLAN_ID:-$(bcs_state_get '.plan_id // ""')}"
-[ -n "$job_id" ] || { bcs_stop "state" "job_id tidak ada — jalankan 02-happy-path.sh dulu"; bcs_finish; }
-bcs_info "state" "verifikasi job_id=$job_id plan_id=${plan_id:-?}"
+[ -n "$job_id" ] || { bcs_stop "state" "job_id is missing — run 02-happy-path.sh first"; bcs_finish; }
+bcs_info "state" "verifying job_id=$job_id plan_id=${plan_id:-?}"
 
 prefix="$(bcs_table_prefix)"
 
@@ -35,7 +35,7 @@ st="$(jget "$res" '.jobs[0].status // .status')"
 if [ "$st" = "done" ]; then
 	bcs_pass "job-status" "job $job_id = done"
 else
-	bcs_fail "job-status" "status job = '$st' (harus done; bila rolled_back jalankan 04 dulu lalu ulangi alur)"
+	bcs_fail "job-status" "job status = '$st' (expected done; if rolled_back, run 04 first and repeat the flow)"
 fi
 
 count_created="$(jget "$res" '.jobs[0].counts.created // .jobs[0].counts.products_created')"
@@ -49,19 +49,19 @@ sql_variations="SELECT COUNT(*) FROM ${prefix}posts v INNER JOIN ${prefix}postme
 db_variations="$(bcs_db_scalar "$sql_variations")"
 
 if [ "${db_products:-0}" -ge 27 ] 2>/dev/null; then
-	bcs_pass "db-products" "produk hasil job di DB = $db_products (>= 27; 30 baris - 3 skip)"
+	bcs_pass "db-products" "job products in DB = $db_products (>= 27; 30 rows - 3 skips)"
 else
-	bcs_fail "db-products" "produk hasil job di DB = ${db_products:-?} (harus >= 27)"
+	bcs_fail "db-products" "job products in DB = ${db_products:-?} (expected >= 27)"
 fi
 if [ "${db_variations:-0}" -ge 60 ] 2>/dev/null; then
-	bcs_pass "db-variations" "variasi hasil job di DB = $db_variations (>= 60; AC-1)"
+	bcs_pass "db-variations" "job variations in DB = $db_variations (>= 60; AC-1)"
 else
-	bcs_fail "db-variations" "variasi hasil job di DB = ${db_variations:-?} (harus >= 60)"
+	bcs_fail "db-variations" "job variations in DB = ${db_variations:-?} (expected >= 60)"
 fi
 if [ -n "$count_created" ] && [ "$db_products" != "$count_created" ] 2>/dev/null; then
 	bcs_fail "counter-vs-db" "counter job ($count_created) != DB ($db_products)"
 else
-	bcs_pass "counter-vs-db" "counter job == jumlah DB ($db_products)"
+	bcs_pass "counter-vs-db" "job counter == DB count ($db_products)"
 fi
 
 # --- 3. wp post list: sampel produk draft hasil job --------------------------
@@ -69,7 +69,7 @@ draft_count="$(bcs_wp post list --post_type=product --post_status=draft --format
 if [ "${draft_count:-0}" -ge 28 ] 2>/dev/null; then
 	bcs_pass "wp-post-list" "post list draft = $draft_count (>= 28)"
 else
-	bcs_fail "wp-post-list" "post list draft = ${draft_count:-?} (harus >= 28)"
+	bcs_fail "wp-post-list" "draft post list = ${draft_count:-?} (expected >= 28)"
 fi
 
 # --- 4. Spot-check SKU (id: >0 = ada; dua di antaranya variable) -------------
@@ -81,19 +81,19 @@ for s in DRS-KTN-001 DRS-KTN-010 KML-GRS-001; do
 	if [ "${pid:-0}" -gt 0 ] 2>/dev/null; then
 		bcs_info "sku-spot" "$s → product_id=$pid"
 	else
-		bcs_fail "sku-spot" "SKU $s tidak ditemukan"; sku_check_fail=1
+		bcs_fail "sku-spot" "SKU $s not found"; sku_check_fail=1
 	fi
 done
-[ "$sku_check_fail" = "0" ] && bcs_pass "sku-spot" "semua SKU sampel ditemukan"
+[ "$sku_check_fail" = "0" ] && bcs_pass "sku-spot" "all sample SKUs found"
 
 # --- 5. AC-10: kebijakan skip diterapkan pada grup duplikat intra-batch -------
 # Implementasi konservatif menandai dan melewati kedua anggota grup SKU sama;
 # preview plan sudah menghitung keduanya dalam 3 baris skip (plus 1 existing).
 dup_sku_count="$(bcs_db_scalar "SELECT COUNT(DISTINCT p.ID) FROM ${prefix}posts p INNER JOIN ${prefix}postmeta m ON m.post_id = p.ID WHERE p.post_type='product' AND p.post_status NOT IN ('trash') AND m.meta_key='_sku' AND UPPER(m.meta_value) = 'KML-GRS-005';")"
 if [ "${dup_sku_count:-0}" = "0" ] 2>/dev/null; then
-	bcs_pass "ac10-intra-dedup" "SKU KML-GRS-005 tidak dibuat; kedua baris grup duplikat di-skip sesuai plan"
+	bcs_pass "ac10-intra-dedup" "SKU KML-GRS-005 was not created; both duplicate-group rows were skipped per plan"
 else
-	bcs_fail "ac10-intra-dedup" "SKU KML-GRS-005 terdaftar ${dup_sku_count:-?}x (plan mengharapkan 0 karena kedua baris di-skip)"
+	bcs_fail "ac10-intra-dedup" "SKU KML-GRS-005 appears ${dup_sku_count:-?} times (plan expected 0 because both rows were skipped)"
 fi
 
 # --- 6. Taksonomi global pa_ukuran & pa_warna (attribute_scope=global_pa) ----
@@ -105,7 +105,7 @@ for t in Merah Biru merah biru; do printf '%s' "$terms_warna" | grep -qw "$t" &&
 if [ "$ok_ukuran" = "1" ] && [ "$ok_warna" = "1" ]; then
 	bcs_pass "pa-taxonomies" "pa_ukuran[$terms_ukuran] pa_warna[$terms_warna]"
 else
-	bcs_fail "pa-taxonomies" "term atribut kurang: ukuran='$terms_ukuran' warna='$terms_warna'"
+	bcs_fail "pa-taxonomies" "missing attribute terms: size='$terms_ukuran' color='$terms_warna'"
 fi
 
 # --- 7. AC-2: produk native terbaca via WC CRUD standar (tanpa AI) -----------
@@ -119,9 +119,9 @@ $kids = $is_var ? $p->get_children() : array();
 echo $is_var ? "ok:variable:" . count( $kids ) : "ok:simple";
 ' 2>/dev/null | tail -n 1)"
 case "$native" in
-	ok:variable:*) bcs_pass "ac2-native-wc" "DRS-KTN-001 variable native, ${native#ok:variable:} variasi terbaca via WC_Product" ;;
-	ok:simple)     bcs_pass "ac2-native-wc" "produk simple native terbaca via WC_Product" ;;
-	*)             bcs_fail "ac2-native-wc" "produk tidak terbaca via WC CRUD: '$native'" ;;
+	ok:variable:*) bcs_pass "ac2-native-wc" "DRS-KTN-001 is a native variable product; ${native#ok:variable:} variations read via WC_Product" ;;
+	ok:simple)     bcs_pass "ac2-native-wc" "native simple product read via WC_Product" ;;
+	*)             bcs_fail "ac2-native-wc" "product not readable via WC CRUD: '$native'" ;;
 esac
 
 bcs_finish

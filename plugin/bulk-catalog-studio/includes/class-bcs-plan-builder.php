@@ -104,7 +104,7 @@ class BCS_Plan_Builder {
 			array( '%d', '%d', '%s', '%s', '%s', '%s' )
 		);
 
-		return $inserted ? true : new WP_Error( 'bcs_db_error', __( 'Gagal menyimpan plan staging.', 'bulk-catalog-studio' ) );
+		return $inserted ? true : new WP_Error( 'bcs_db_error', __( 'Failed to store the staging plan.', 'bulk-catalog-studio' ) );
 	}
 
 	/**
@@ -133,12 +133,12 @@ class BCS_Plan_Builder {
 	public static function get_staging_rows( $job_id ) {
 		$staging = self::get_staging_row( $job_id );
 		if ( ! $staging ) {
-			return new WP_Error( 'bcs_not_parsed', __( 'Job belum memiliki hasil parse (plan staging v0 tidak ada).', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_parsed', __( 'The job has no parse results yet (staging plan v0 missing).', 'bulk-catalog-studio' ) );
 		}
 
 		$data = json_decode( (string) $staging->plan_json, true );
 		if ( ! is_array( $data ) || ! isset( $data['rows'] ) || ! is_array( $data['rows'] ) ) {
-			return new WP_Error( 'bcs_not_parsed', __( 'Plan staging tidak berisi rows yang valid.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_parsed', __( 'The staging plan contains no valid rows.', 'bulk-catalog-studio' ) );
 		}
 
 		return $data['rows'];
@@ -200,12 +200,12 @@ class BCS_Plan_Builder {
 	 */
 	public static function build( $job_id, $on_duplicate, array $defaults = array(), array $image_policy = array(), array $row_overrides = array() ) {
 		if ( ! in_array( $on_duplicate, array( 'skip', 'update' ), true ) ) {
-			return new WP_Error( 'bcs_invalid_input', __( "on_duplicate wajib 'skip' atau 'update' pada tahap build-plan; 'flag_only' ditolak.", 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_invalid_input', __( "on_duplicate must be 'skip' or 'update' at the build-plan stage; 'flag_only' is rejected.", 'bulk-catalog-studio' ) );
 		}
 
 		$job = BCS_Job_Manager::get( $job_id );
 		if ( ! $job ) {
-			return new WP_Error( 'bcs_not_found', __( 'Job tidak ditemukan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Job not found.', 'bulk-catalog-studio' ) );
 		}
 
 		// MINOR-2 (retur QA-1): rebuild plan diizinkan pada job 'planned' —
@@ -215,7 +215,7 @@ class BCS_Plan_Builder {
 				'bcs_invalid_state',
 				sprintf(
 					/* translators: %s: status job */
-					__( 'build-plan hanya boleh pada job berstatus parsed atau planned (status saat ini: %s).', 'bulk-catalog-studio' ),
+					__( 'build-plan only works on jobs with status parsed or planned (current status: %s).', 'bulk-catalog-studio' ),
 					$job['status']
 				)
 			);
@@ -227,7 +227,7 @@ class BCS_Plan_Builder {
 
 		// Gate1 #4: V1 hanya attachment_id_only.
 		if ( 'attachment_id_only' !== $policy['mode'] ) {
-			return new WP_Error( 'bcs_unsupported', __( 'image_policy.mode "sideload_url" tidak tersedia di V1 (keputusan gate1 #4).', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_unsupported', __( 'image_policy.mode "sideload_url" is not available in V1 (gate1 decision #4).', 'bulk-catalog-studio' ) );
 		}
 
 		$rows = self::get_staging_rows( $job_id );
@@ -300,7 +300,7 @@ class BCS_Plan_Builder {
 						'bcs_invalid_override',
 						sprintf(
 							/* translators: 1: nomor baris */
-							__( 'row_overrides op=update untuk baris %1$d ditolak: baris bukan duplikat produk existing.', 'bulk-catalog-studio' ),
+							__( 'row_overrides op=update for row %1$d rejected: the row does not match an existing product.', 'bulk-catalog-studio' ),
 							$row_index
 						)
 					);
@@ -445,7 +445,7 @@ class BCS_Plan_Builder {
 			'plan_hash'          => $plan_hash,
 			'summary'            => $summary,
 			'diff_preview_url'   => admin_url( 'admin.php?page=bcs-jobs&view=plan&plan=' . $plan_id ),
-			'approval_token_hint' => __( 'Token approval hanya ditampilkan di layar admin WP (halaman diff). Minta ke manusia.', 'bulk-catalog-studio' ),
+			'approval_token_hint' => __( 'The approval token is only displayed on the WP admin screen (diff page). Ask the human.', 'bulk-catalog-studio' ),
 		);
 	}
 
@@ -607,7 +607,7 @@ class BCS_Plan_Builder {
 	 */
 	private static function snapshot_before( $product_id ) {
 		if ( ! class_exists( 'WC_Product' ) || ! function_exists( 'wc_get_product' ) ) {
-			return new WP_Error( 'bcs_missing_woocommerce', __( 'WooCommerce tidak aktif — tidak bisa membuat snapshot before.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_missing_woocommerce', __( 'WooCommerce is not active — cannot create the before snapshot.', 'bulk-catalog-studio' ) );
 		}
 
 		$product = wc_get_product( $product_id );
@@ -616,7 +616,7 @@ class BCS_Plan_Builder {
 				'bcs_not_found',
 				sprintf(
 					/* translators: %d: product ID */
-					__( 'Produk existing #%d tidak dapat dimuat untuk snapshot before.', 'bulk-catalog-studio' ),
+					__( 'Existing product #%d could not be loaded for the before snapshot.', 'bulk-catalog-studio' ),
 					(int) $product_id
 				)
 			);
@@ -696,7 +696,7 @@ class BCS_Plan_Builder {
 		);
 
 		if ( ! $inserted ) {
-			return new WP_Error( 'bcs_db_error', __( 'Gagal menyimpan plan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_db_error', __( 'Failed to save the plan.', 'bulk-catalog-studio' ) );
 		}
 
 		return (int) $wpdb->insert_id;
@@ -783,7 +783,7 @@ class BCS_Plan_Builder {
 
 		$allowed = array( 'planned', 'approved', 'executed', 'executed_with_errors', 'rolled_back' );
 		if ( ! in_array( $status, $allowed, true ) ) {
-			return new WP_Error( 'bcs_invalid_input', __( 'Status plan tidak valid.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_invalid_input', __( 'Invalid plan status.', 'bulk-catalog-studio' ) );
 		}
 
 		$table = $wpdb->prefix . 'bcs_plans';
@@ -791,6 +791,6 @@ class BCS_Plan_Builder {
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- tabel kustom.
 		$updated = $wpdb->update( $table, array( 'status' => $status ), array( 'id' => absint( $plan_id ) ), array( '%s' ), array( '%d' ) );
 
-		return false === $updated ? new WP_Error( 'bcs_db_error', __( 'Gagal memperbarui status plan.', 'bulk-catalog-studio' ) ) : true;
+		return false === $updated ? new WP_Error( 'bcs_db_error', __( 'Failed to update the plan status.', 'bulk-catalog-studio' ) ) : true;
 	}
 }

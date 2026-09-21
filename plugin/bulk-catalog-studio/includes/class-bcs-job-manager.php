@@ -155,7 +155,7 @@ class BCS_Job_Manager {
 
 		$source_type = isset( $args['source_type'] ) ? sanitize_key( $args['source_type'] ) : '';
 		if ( ! in_array( $source_type, array( 'inline_csv', 'attachment', 'url' ), true ) ) {
-			return new WP_Error( 'bcs_invalid_input', __( 'source_type tidak valid.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_invalid_input', __( 'Invalid source_type.', 'bulk-catalog-studio' ) );
 		}
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- tabel kustom.
@@ -175,7 +175,7 @@ class BCS_Job_Manager {
 		);
 
 		if ( ! $inserted ) {
-			return new WP_Error( 'bcs_db_error', __( 'Gagal menyimpan job.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_db_error', __( 'Failed to save the job.', 'bulk-catalog-studio' ) );
 		}
 
 		return (int) $wpdb->insert_id;
@@ -204,7 +204,7 @@ class BCS_Job_Manager {
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- tabel kustom.
 		$updated = $wpdb->update( $table, $fields, array( 'id' => absint( $job_id ) ) );
 		if ( false === $updated ) {
-			return new WP_Error( 'bcs_db_error', __( 'Gagal memperbarui job.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_db_error', __( 'Failed to update the job.', 'bulk-catalog-studio' ) );
 		}
 
 		return true;
@@ -228,7 +228,7 @@ class BCS_Job_Manager {
 
 		$job = self::get_raw( $job_id );
 		if ( ! $job ) {
-			return new WP_Error( 'bcs_not_found', __( 'Job tidak ditemukan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Job not found.', 'bulk-catalog-studio' ) );
 		}
 
 		$from_status = (string) $job->status;
@@ -237,7 +237,7 @@ class BCS_Job_Manager {
 		if ( ! isset( $allowed[ $from_status ] ) || ! in_array( $to_status, $allowed[ $from_status ], true ) ) {
 			$message = sprintf(
 				/* translators: 1: status asal, 2: status tujuan */
-				__( 'Transisi status ditolak: %1$s → %2$s tidak valid sesuai state machine.', 'bulk-catalog-studio' ),
+				__( 'Status transition rejected: %1$s → %2$s is not valid per the state machine.', 'bulk-catalog-studio' ),
 				$from_status,
 				$to_status
 			);
@@ -270,7 +270,7 @@ class BCS_Job_Manager {
 		$result = $wpdb->update( $table, $data, array( 'id' => absint( $job_id ), 'status' => $from_status ), $format, array( '%d', '%s' ) );
 
 		if ( 1 !== (int) $result ) {
-			$message = __( 'Transisi status gagal: job sudah berubah oleh proses lain.', 'bulk-catalog-studio' );
+			$message = __( 'Status transition failed: the job was changed by another process.', 'bulk-catalog-studio' );
 
 			BCS_Audit_Logger::log_call( $context, 'state_transition', 'failed', $message, absint( $job_id ) );
 
@@ -293,12 +293,12 @@ class BCS_Job_Manager {
 
 		$plan = BCS_Executor::get_plan_raw( $plan_id );
 		if ( ! $plan ) {
-			return new WP_Error( 'bcs_not_found', __( 'Plan tidak ditemukan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Plan not found.', 'bulk-catalog-studio' ) );
 		}
 
 		$job = self::get_raw( $plan->job_id );
 		if ( ! $job ) {
-			return new WP_Error( 'bcs_not_found', __( 'Job tidak ditemukan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Job not found.', 'bulk-catalog-studio' ) );
 		}
 
 		$now   = BCS_Settings::now_mysql();
@@ -310,13 +310,13 @@ class BCS_Job_Manager {
 			if ( ! $resume ) {
 				return new WP_Error(
 					'bcs_execution_in_progress',
-					__( 'Job masih executing. Gunakan resume=true bila heartbeat stale (>5 menit) atau eksekusi sebelumnya deferred.', 'bulk-catalog-studio' )
+					__( 'The job is still executing. Use resume=true if the heartbeat is stale (>5 minutes) or the previous execution was deferred.', 'bulk-catalog-studio' )
 				);
 			}
 			if ( ! self::is_stale( $job ) && ! $deferred ) {
 				return new WP_Error(
 					'bcs_execution_in_progress',
-					__( 'Job masih executing dan heartbeat-nya segar. Tunggu hingga stale (>5 menit) sebelum resume.', 'bulk-catalog-studio' )
+					__( 'The job is still executing and its heartbeat is fresh. Wait until it goes stale (>5 minutes) before resuming.', 'bulk-catalog-studio' )
 				);
 			}
 
@@ -347,7 +347,7 @@ class BCS_Job_Manager {
 				'bcs_invalid_state',
 				sprintf(
 					/* translators: 1: status job, 2: status plan */
-					__( 'Plan hanya bisa dieksekusi saat job approved dan plan approved (status saat ini: job=%1$s, plan=%2$s).', 'bulk-catalog-studio' ),
+					__( 'The plan can only be executed when the job is approved and the plan is approved (current status: job=%1$s, plan=%2$s).', 'bulk-catalog-studio' ),
 					(string) $job->status,
 					(string) $plan->status
 				)
@@ -366,7 +366,7 @@ class BCS_Job_Manager {
 				'bcs_execution_in_progress',
 				sprintf(
 					/* translators: %d: ID job yang sedang berjalan */
-					__( 'Ada job lain sedang executing (job #%d). Hanya 1 job executing per situs diizinkan.', 'bulk-catalog-studio' ),
+					__( 'Another job is executing (job #%d). Only 1 executing job per site is allowed.', 'bulk-catalog-studio' ),
 					(int) $other->id
 				)
 			);
@@ -392,7 +392,7 @@ class BCS_Job_Manager {
 		);
 
 		if ( 1 !== (int) $result ) {
-			return new WP_Error( 'bcs_state_conflict', __( 'Transisi approved → executing gagal (job berubah oleh proses lain).', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_state_conflict', __( 'approved → executing transition failed (the job was changed by another process).', 'bulk-catalog-studio' ) );
 		}
 
 		return array(

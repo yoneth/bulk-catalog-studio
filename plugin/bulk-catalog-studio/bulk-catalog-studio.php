@@ -2,7 +2,7 @@
 /**
  * Plugin Name:          Bulk Catalog Studio
  * Plugin URI:           https://cf.djavaweb.com/
- * Description:          AI Bulk Catalog Studio (BCS) — mengubah CSV / Google Sheet export / rows hasil prompt menjadi produk WooCommerce native melalui WordPress Abilities API + MCP Adapter. Pipeline: parse → duplicate-check → build-plan → human approval (token one-time) → execute → rollback. Semua tulisan produk memakai WC_Product CRUD, tanpa wp_insert_post.
+ * Description:          AI Bulk Catalog Studio (BCS) — turns CSV / Google Sheets exports / prompt-produced rows into native WooCommerce products via the WordPress Abilities API + MCP Adapter. Pipeline: parse → duplicate-check → build-plan → human approval (one-time token) → execute → rollback. All product writes use WC_Product CRUD, never wp_insert_post.
  * Version:              1.0.0
  * Requires at least:    6.9
  * Requires PHP:         7.4

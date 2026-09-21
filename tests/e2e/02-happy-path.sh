@@ -49,7 +49,7 @@ result_ok() {
 
 stage="$(bcs_state_get '.stage // ""')"
 if [ "$stage" = "done" ]; then
-	bcs_pass "already-done" "job $(bcs_state_get '.job_id') sudah done sebelumnya — tidak ada aksi baru"
+	bcs_pass "already-done" "job $(bcs_state_get '.job_id') was already done — no new action"
 	bcs_finish
 fi
 
@@ -72,8 +72,8 @@ $pid = $p->save();
 echo $pid ? "created:" . $pid : "failed";
 ' 2>/dev/null | tail -n 1)" || seed_out=""
 case "$seed_out" in
-	exists:*|created:*) bcs_pass "seed-existing" "produk existing SKU $seed_sku siap ($seed_out)" ;;
-	*) bcs_fail "seed-existing" "gagal seed produk existing: '$seed_out'" ;;
+	exists:*|created:*) bcs_pass "seed-existing" "existing product SKU $seed_sku is ready ($seed_out)" ;;
+	*) bcs_fail "seed-existing" "failed to seed existing product: '$seed_out'" ;;
 esac
 
 # ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@ esac
 # ---------------------------------------------------------------------------
 job_id="$(bcs_state_get '.job_id // ""')"
 if [ -z "$job_id" ]; then
-	[ -s "$BCS_FIXTURE" ] || { bcs_stop "parse-source" "fixture tidak ada: $BCS_FIXTURE"; bcs_finish; }
+	[ -s "$BCS_FIXTURE" ] || { bcs_stop "parse-source" "fixture not found: $BCS_FIXTURE"; bcs_finish; }
 	input="$(jq -n --rawfile csv "$BCS_FIXTURE" '{
 		source_type: "inline_csv",
 		csv_text: $csv,
@@ -97,7 +97,7 @@ if [ -z "$job_id" ]; then
 			"SKU Variasi":"variation_sku", "Harga Variasi":"variation_regular_price",
 			"Stok Variasi":"variation_stock_quantity"
 		},
-		notes: "E2E happy path 30 baris (docs/test/e2e-runbook.md)"
+		notes: "E2E happy path 30 rows (docs/test/e2e-runbook.md)"
 	}')"
 	res="$(bcs_call_tool "bcs-parse-source" "$input")" || res=""
 	if result_ok "$res" && [ "$(jget "$res" '.status')" = "parsed" ]; then
@@ -109,13 +109,13 @@ if [ -z "$job_id" ]; then
 		if [ "$total_rows" = "30" ]; then
 			bcs_pass "parse-source" "job_id=$job_id status=parsed total_rows=$total_rows"
 		else
-			bcs_fail "parse-source" "total_rows=$total_rows (harus 30) — STOP dan review warnings"
+			bcs_fail "parse-source" "total_rows=$total_rows (expected 30) — STOP and review warnings"
 		fi
 	else
-		bcs_stop "parse-source" "gagal/ditolak: $(printf '%s' "${res:-$BCS_LAST_RESPONSE}" | head -c 300)"
+		bcs_stop "parse-source" "failed/rejected: $(printf '%s' "${res:-$BCS_LAST_RESPONSE}" | head -c 300)"
 	fi
 else
-	bcs_info "parse-source" "resume: pakai job_id=$job_id dari state"
+	bcs_info "parse-source" "resume: using job_id=$job_id from state"
 fi
 [ -n "$job_id" ] || { bcs_finish; }
 
@@ -134,10 +134,10 @@ if [ -z "$plan_id" ]; then
 		if [ "${intra:-0}" -ge 1 ] && [ "${existing:-0}" -ge 1 ] 2>/dev/null; then
 			bcs_pass "check-duplicates" "duplicate_count=$dup_count intra=$intra existing=$existing"
 		else
-			bcs_stop "check-duplicates" "deteksi duplikat tidak sesuai (intra=$intra existing=$existing) — STOP, review AC-10"
+			bcs_stop "check-duplicates" "duplicate detection is unexpected (intra=$intra existing=$existing) — STOP and review AC-10"
 		fi
 	else
-		bcs_stop "check-duplicates" "gagal: $(printf '%s' "${res:-$BCS_LAST_RESPONSE}" | head -c 300)"
+		bcs_stop "check-duplicates" "failed: $(printf '%s' "${res:-$BCS_LAST_RESPONSE}" | head -c 300)"
 	fi
 
 	# ---------------------------------------------------------------------------
@@ -160,13 +160,13 @@ if [ -z "$plan_id" ]; then
 			bcs_pass "build-plan" "plan_id=$plan_id hash=${plan_hash:0:12}… summary=$summary"
 			bcs_state_set stage "planned"
 		else
-			bcs_fail "build-plan" "summary tidak sesuai harapan (create=27, variasi>=60, skip=3): $summary"
+			bcs_fail "build-plan" "unexpected summary (create=27, variations>=60, skip=3): $summary"
 		fi
 	else
-		bcs_stop "build-plan" "gagal: $(printf '%s' "${res:-$BCS_LAST_RESPONSE}" | head -c 300)"
+		bcs_stop "build-plan" "failed: $(printf '%s' "${res:-$BCS_LAST_RESPONSE}" | head -c 300)"
 	fi
 else
-	bcs_info "build-plan" "resume: pakai plan_id=$plan_id dari state"
+	bcs_info "build-plan" "resume: using plan_id=$plan_id from state"
 fi
 [ -n "$plan_id" ] || { bcs_finish; }
 plan_hash="$(bcs_state_get '.plan_hash // ""')"
@@ -177,19 +177,19 @@ summary="$(bcs_state_get '.summary // "{}"')"
 # dry_run bukan aksi tulis dan memang boleh dipakai sebagai simulasi plan.
 # ---------------------------------------------------------------------------
 res="$(bcs_call_tool "bcs-execute-batch" '{"plan_id":'"$plan_id"'}')" || res=""
-if bcs_last_response_rejected 'approv|planned|permission|denied|invalid|error|gagal'; then
-	bcs_pass "execute-before-approve-rejected" "execute-batch pada plan belum approved DITOLAK (AC-4) ✔"
+if bcs_last_response_rejected 'approv|planned|permission|denied|invalid|error'; then
+	bcs_pass "execute-before-approve-rejected" "execute-batch on an unapproved plan was rejected (AC-4) ✔"
 else
-	bcs_fail "execute-before-approve-rejected" "execute-batch TIDAK ditolak padahal plan masih planned — pelanggaran gerbang approval (AC-4)"
+	bcs_fail "execute-before-approve-rejected" "execute-batch was not rejected even though the plan is still planned — approval gate violation (AC-4)"
 fi
 
 # job masih planned
 res="$(bcs_call_tool "bcs-job-status" '{"job_id":'"$job_id"'}')" || res=""
 st="$(jget "$res" '.jobs[0].status // .status')"
 if [ "$st" = "planned" ]; then
-	bcs_pass "job-status-planned" "job $job_id masih planned (tidak ada efek samping)"
+	bcs_pass "job-status-planned" "job $job_id remains planned (no side effects)"
 else
-	bcs_fail "job-status-planned" "status job = '$st' (harus planned)"
+	bcs_fail "job-status-planned" "job status = '$st' (expected planned)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -206,13 +206,13 @@ echo is_wp_error( $t ) ? "ERR:" . $t->get_error_message() : $t;
 		token_src="wp-cli eval (helper automation)"
 	fi
 	if [ -z "$token" ] || [ "${token#ERR:}" != "$token" ] || ! printf '%s' "$token" | grep -Eq '^[A-Z0-9-]{6,12}$'; then
-		bcs_stop "approval-token" "Token approval belum tersedia (src=$token_src, got='${token:-kosong}'). \
-STOP: minta token dari Mas Rio via layar admin ${BCS_SITE_URL}/wp-admin/admin.php?page=bcs-jobs&view=plan&plan=$plan_id \
-(Generate token approval), lalu jalankan ulang: BCS_APPROVAL_TOKEN=BCS-XXXXX $0 (state di-resume dari sini). \
-Matikan helper dengan BCS_TOKEN_HELPER=none bila token manual diwajibkan."
+		bcs_stop "approval-token" "Approval token is not available (src=$token_src, got='${token:-empty}'). \
+STOP: request the token from Mas Rio via the admin screen ${BCS_SITE_URL}/wp-admin/admin.php?page=bcs-jobs&view=plan&plan=$plan_id \
+(Generate token approval), then rerun: BCS_APPROVAL_TOKEN=BCS-XXXXX $0 (state resumes here). \
+Set BCS_TOKEN_HELPER=none when manual token entry is required."
 		bcs_finish
 	fi
-	bcs_info "approval-token" "token diperoleh via $token_src"
+	bcs_info "approval-token" "token obtained via $token_src"
 
 	res="$(bcs_call_tool "bcs-approve-plan" '{"plan_id":'"$plan_id"',"plan_hash":"'"$plan_hash"'","confirmation_token":"'"$token"'"}')" || res=""
 	if result_ok "$res" && [ "$(jget "$res" '.status')" = "approved" ]; then
@@ -220,11 +220,11 @@ Matikan helper dengan BCS_TOKEN_HELPER=none bila token manual diwajibkan."
 		bcs_state_set stage "approved"
 	else
 		note="$(jget "$res" '.note')"
-		bcs_stop "approve-plan" "approval gagal: '${note:-token invalid/expired}' — generate token baru lalu rerun"
+		bcs_stop "approve-plan" "approval failed: '${note:-invalid/expired token}' — generate a new token and rerun"
 		bcs_finish
 	fi
 else
-	bcs_info "approve-plan" "resume: stage=$stage (approval sudah dilewati)"
+	bcs_info "approve-plan" "resume: stage=$stage (approval already completed)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -235,16 +235,16 @@ if [ "$stage" != "executed" ]; then
 	if result_ok "$res" && [ "$(jget "$res" '.status')" = "done" ] && [ "$(jget "$res" '.counts.failed')" = "0" ]; then
 		bcs_pass "execute-dry-run" "dry_run done, failed=0, counts=$(printf '%s' "$res" | jq -c '.counts')"
 	else
-		bcs_stop "execute-dry-run" "dry_run gagal — JANGAN eksekusi sungguhan: $(printf '%s' "${res:-$BCS_LAST_RESPONSE}" | head -c 300)"
+		bcs_stop "execute-dry-run" "dry_run failed — DO NOT execute for real: $(printf '%s' "${res:-$BCS_LAST_RESPONSE}" | head -c 300)"
 		bcs_finish
 	fi
 	# DB guard: dry run TIDAK boleh menulis produk bertag plan ini.
 	prefix="$(bcs_table_prefix)"
 	written="$(bcs_db_scalar "SELECT COUNT(*) FROM ${prefix}posts p INNER JOIN ${prefix}postmeta m ON m.post_id = p.ID WHERE p.post_type = 'product' AND m.meta_key = '_bcs_plan_id' AND m.meta_value = '${plan_id}';")"
 	if [ "${written:-0}" = "0" ]; then
-		bcs_pass "execute-dry-run-no-write" "0 produk tertulis setelah dry_run ✔"
+		bcs_pass "execute-dry-run-no-write" "0 products written after dry_run ✔"
 	else
-		bcs_fail "execute-dry-run-no-write" "dry_run menulis $written produk — STOP, periksa implementasi"
+		bcs_fail "execute-dry-run-no-write" "dry_run wrote $written products — STOP and inspect the implementation"
 	fi
 fi
 
@@ -262,10 +262,10 @@ if [ "$stage" != "executed" ]; then
 		counts="$(jget "$res" '.counts // "{}"')"
 		bcs_state_set counts "$counts"
 		bcs_state_set stage "executed"  # job bisa partially_failed — tetap dicatat utk rollback
-		bcs_fail "execute-batch" "status=$(jget "$res" '.status') counts=$counts failures=$(printf '%s' "$res" | jq -c '.failures // []' | head -c 200) — jalankan 04-rollback.sh"
+		bcs_fail "execute-batch" "status=$(jget "$res" '.status') counts=$counts failures=$(printf '%s' "$res" | jq -c '.failures // []' | head -c 200) — run 04-rollback.sh"
 	fi
 else
-	bcs_info "execute-batch" "resume: stage=executed (eksekusi nyata sudah pernah dijalankan)"
+	bcs_info "execute-batch" "resume: stage=executed (real execution already ran)"
 fi
 [ "$(bcs_state_get '.stage // ""')" = "executed" ] || { bcs_finish; }
 
@@ -278,7 +278,7 @@ if [ "$st" = "done" ]; then
 	bcs_pass "job-status-done" "job $job_id = done (AC-1)"
 	bcs_state_set stage "done"
 else
-	bcs_fail "job-status-done" "status job = '$st' (harus done)"
+	bcs_fail "job-status-done" "job status = '$st' (expected done)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -289,12 +289,12 @@ if result_ok "$res"; then
 	total="$(jget "$res" '.total')"
 	create_rows="$(printf '%s' "$res" | jq -r '[.entries[]? | select(.action=="create_product" and .product_id != null and .actor_via=="mcp")] | length' 2>/dev/null || echo 0)"
 	if [ "${total:-0}" -ge 28 ] 2>/dev/null && [ "${create_rows:-0}" -ge 1 ] 2>/dev/null; then
-		bcs_pass "audit-log" "total=$total entri row; create_product+product_id+via=mcp ditemukan ($create_rows) (AC-5)"
+		bcs_pass "audit-log" "total=$total row entries; create_product+product_id+via=mcp found ($create_rows) (AC-5)"
 	else
-		bcs_fail "audit-log" "audit kurang: total=$total, create_product ber-produk_id=$create_rows"
+		bcs_fail "audit-log" "audit is incomplete: total=$total, create_product with product_id=$create_rows"
 	fi
 else
-	bcs_fail "audit-log" "audit-log gagal: $(printf '%s' "${res:-$BCS_LAST_RESPONSE}" | head -c 200)"
+	bcs_fail "audit-log" "audit-log failed: $(printf '%s' "${res:-$BCS_LAST_RESPONSE}" | head -c 200)"
 fi
 
 bcs_finish

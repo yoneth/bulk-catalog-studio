@@ -95,12 +95,12 @@ function expect( $label, $cond ) {
 	if ( ! $cond ) { $fail++; }
 }
 
-expect( '30 baris terparse', count( $rows ) === 30 );
+expect( '30 rows parsed', count( $rows ) === 30 );
 expect( '20 simple', $n_simple === 20 );
 expect( '10 variable', $n_var === 10 );
-expect( '60 variasi', $n_combos === 60 );
-expect( 'ada warning stok kosong', count( preg_grep( '/stok kosong/', $parsed['warnings'] ) ) > 0 );
-expect( 'ada warning duplikat upload? tidak — cek 0 error', count( $parsed['errors'] ) === 0 );
+expect( '60 variations', $n_combos === 60 );
+expect( 'empty-stock warning is present', count( preg_grep( '/empty stock/', $parsed['warnings'] ) ) > 0 );
+expect( 'no duplicate-upload warning and zero errors', count( $parsed['errors'] ) === 0 );
 
 /* Uji 2: duplicate SKU intra-batch terdeteksi */
 $by_sku = array();
@@ -108,21 +108,21 @@ foreach ( $rows as $row ) {
 	$by_sku[ strtolower( $row['sku'] ) ][] = $row['row_index'];
 }
 $dup_skus = array_filter( $by_sku, function ( $idx ) { return count( $idx ) > 1; } );
-expect( '1 grup SKU duplikat intra-batch (KML-GRS-005)', isset( $dup_skus['kml-grs-005'] ) );
-expect( 'duplikat di baris 5 & 15', isset( $dup_skus['kml-grs-005'] ) && array( 5, 15 ) === $dup_skus['kml-grs-005'] );
+expect( 'one intra-batch duplicate SKU group (KML-GRS-005)', isset( $dup_skus['kml-grs-005'] ) );
+expect( 'duplicate appears on rows 5 and 15', isset( $dup_skus['kml-grs-005'] ) && array( 5, 15 ) === $dup_skus['kml-grs-005'] );
 
 /* Uji 3: variasi paralel konsisten */
 $first_var = null;
 foreach ( $rows as $row ) {
 	if ( ! empty( $row['variations'] ) ) { $first_var = $row; break; }
 }
-expect( 'baris variable pertama ditemukan', null !== $first_var );
+expect( 'first variable row found', null !== $first_var );
 if ( null === $first_var ) { exit( 1 ); }
-expect( 'variasi punya 6 kombinasi', count( $first_var['variations'] ) === 6 );
-expect( 'variasi pertama sku benar', 'DRS-KTN-001-S-MRH' === $first_var['variations'][0]['sku'] );
-expect( 'variasi pertama atribut', 'S' === $first_var['variations'][0]['attributes']['pa_ukuran'] && 'Merah' === $first_var['variations'][0]['attributes']['pa_warna'] );
-expect( 'variasi terakhir atribut', 'L' === $first_var['variations'][5]['attributes']['pa_ukuran'] && 'Biru' === $first_var['variations'][5]['attributes']['pa_warna'] );
-expect( 'variasi harga L naik 500', '190500' === $first_var['variations'][5]['regular_price'] );
+expect( 'variation has 6 combinations', count( $first_var['variations'] ) === 6 );
+expect( 'first variation SKU is correct', 'DRS-KTN-001-S-MRH' === $first_var['variations'][0]['sku'] );
+expect( 'first variation attributes are correct', 'S' === $first_var['variations'][0]['attributes']['pa_ukuran'] && 'Merah' === $first_var['variations'][0]['attributes']['pa_warna'] );
+expect( 'last variation attributes are correct', 'L' === $first_var['variations'][5]['attributes']['pa_ukuran'] && 'Biru' === $first_var['variations'][5]['attributes']['pa_warna'] );
+expect( 'L variation price increases by 500', '190500' === $first_var['variations'][5]['regular_price'] );
 
 /* Uji 4: row_key stabil persis spec §5.4 */
 $rk1 = BCS_CSV_Parser::row_key( 'abc', 11, '  DRS-X ' );
@@ -136,16 +136,16 @@ for ( $i = 1; $i <= 600; $i++ ) {
 	$big .= "Produk $i,SKU-$i\n";
 }
 $parsed_big = BCS_CSV_Parser::parse( $big, ',', true, array(), sha1( $big ) );
-expect( '600 baris ditolak WP_Error', is_wp_error( $parsed_big ) && 'bcs_too_many_rows' === $parsed_big->get_error_code() );
+expect( '600 rows rejected with WP_Error', is_wp_error( $parsed_big ) && 'bcs_too_many_rows' === $parsed_big->get_error_code() );
 
 /* Uji 6: delimiter titik-koma dan tab */
 $semi = "name;sku;regular_price\nA;S-1;1000\nB;S-2;2000\n";
 $p1 = BCS_CSV_Parser::parse( $semi, ';', true, array(), sha1( $semi ) );
-expect( 'delimiter ; jalan', ! is_wp_error( $p1 ) && 2 === count( $p1['rows'] ) );
+expect( 'semicolon delimiter works', ! is_wp_error( $p1 ) && 2 === count( $p1['rows'] ) );
 
 $tab = "name\tsku\tregular_price\nC\tT-1\t3000\n";
 $p2 = BCS_CSV_Parser::parse( $tab, 'tab', true, array(), sha1( $tab ) );
-expect( 'delimiter tab jalan', ! is_wp_error( $p2 ) && '3000' === $p2['rows'][0]['regular_price'] );
+expect( 'tab delimiter works', ! is_wp_error( $p2 ) && '3000' === $p2['rows'][0]['regular_price'] );
 
 /* Uji 7: mapping Indonesia persis contoh spec §4 */
 $src = "Nama,Deskripsi,SKU,Harga,Stok,Berat(kg),P,L,T,Kategori,Tag,Ukuran,Warna,SKU Variasi,Harga Variasi,Stok Variasi,URL Gambar,Alt Gambar,SEO Title,SEO Desc\nSabun,Desc,SB-1,12000,30,0.1,10,5,3,Mandi,sabun,S|M,Putih|Biru,SB-1-PT|SB-1-BR,12000|12000,10|20,99,Alt,X,Y\n";
@@ -164,32 +164,32 @@ if ( is_wp_error( $p3 ) ) {
 	$fail++;
 } else {
 	$r = $p3['rows'][0];
-	expect( 'mapping spec: nama', 'Sabun' === $r['name'] );
-	expect( 'mapping spec: harga', '12000' === $r['regular_price'] );
-	expect( 'mapping spec: dimensi length', '10' === $r['dimensions']['length'] );
-	expect( 'mapping spec: dimensi width', '5' === $r['dimensions']['width'] );
-	expect( 'mapping spec: dimensi height', '3' === $r['dimensions']['height'] );
-	expect( 'mapping spec: kategori', array( 'Mandi' ) === $r['categories'] );
-	expect( 'mapping spec: 2 variasi', 2 === count( $r['variations'] ) );
-	expect( 'mapping spec: variasi warna biru', 'Biru' === $r['variations'][1]['attributes']['pa_warna'] );
-	expect( 'mapping spec: image_url numerik jadi attachment id', 99 === $r['image_id'] );
+	expect( 'mapping spec: name', 'Sabun' === $r['name'] );
+	expect( 'mapping spec: price', '12000' === $r['regular_price'] );
+	expect( 'mapping spec: length dimension', '10' === $r['dimensions']['length'] );
+	expect( 'mapping spec: width dimension', '5' === $r['dimensions']['width'] );
+	expect( 'mapping spec: height dimension', '3' === $r['dimensions']['height'] );
+	expect( 'mapping spec: category', array( 'Mandi' ) === $r['categories'] );
+	expect( 'mapping spec: 2 variations', 2 === count( $r['variations'] ) );
+	expect( 'mapping spec: blue variation color', 'Biru' === $r['variations'][1]['attributes']['pa_warna'] );
+	expect( 'mapping spec: numeric image_url becomes attachment ID', 99 === $r['image_id'] );
 }
 
 /* Uji 8: harga format Indonesia */
 $map_h = array( 'Nama' => 'name', 'SKU' => 'sku', 'Harga' => 'regular_price' );
 $h1 = BCS_CSV_Parser::parse( "Nama,SKU,Harga\nX,SK-1,\"189.000\"\n", ',', true, $map_h, 'h1' );
-expect( 'harga 189.000 → 189000', ! is_wp_error( $h1 ) && '189000' === $h1['rows'][0]['regular_price'] );
+expect( 'price 189.000 → 189000', ! is_wp_error( $h1 ) && '189000' === $h1['rows'][0]['regular_price'] );
 $h2 = BCS_CSV_Parser::parse( "Nama,SKU,Harga\nX,SK-1,\"1.899,50\"\n", ',', true, $map_h, 'h2' );
-expect( 'harga 1.899,50 → 1899.5', ! is_wp_error( $h2 ) && '1899.5' === $h2['rows'][0]['regular_price'] );
+expect( 'price 1.899,50 → 1899.5', ! is_wp_error( $h2 ) && '1899.5' === $h2['rows'][0]['regular_price'] );
 $h3 = BCS_CSV_Parser::parse( "Nama,SKU,Harga\nX,SK-1,seribu\n", ',', true, $map_h, 'h3' );
-expect( 'harga non-numerik → warning + null', ! is_wp_error( $h3 ) && null === $h3['rows'][0]['regular_price'] && count( preg_grep( '/non-numerik/', $h3['warnings'] ) ) > 0 );
+expect( 'non-numeric price → warning + null', ! is_wp_error( $h3 ) && null === $h3['rows'][0]['regular_price'] && count( preg_grep( '/non-numeric/', $h3['warnings'] ) ) > 0 );
 
 /* Uji 9: cartesian product saat kolom variasi eksplisit tidak ada */
 $cart = "Nama,SKU,Harga,Ukuran,Warna,SKU Variasi,Harga Variasi,Stok Variasi\nY,YY-1,50000,S|M,Merah|Biru,YY-1-A|YY-1-B|YY-1-C|YY-1-D,50000|50000|50000|50000,1|2|3|4\n";
 $map2 = array( 'Nama' => 'name', 'SKU' => 'sku', 'Harga' => 'regular_price', 'Ukuran' => 'attribute:pa_ukuran', 'Warna' => 'attribute:pa_warna', 'SKU Variasi' => 'variation_sku', 'Harga Variasi' => 'variation_regular_price', 'Stok Variasi' => 'variation_stock_quantity' );
 $p4 = BCS_CSV_Parser::parse( $cart, ',', true, $map2, 'cart' );
-expect( 'cartesian 2x2 = 4 variasi', ! is_wp_error( $p4 ) && 4 === count( $p4['rows'][0]['variations'] ) );
-expect( 'cartesian combo[3] = L? tidak — (M,Biru)', ! is_wp_error( $p4 ) && 'M' === $p4['rows'][0]['variations'][3]['attributes']['pa_ukuran'] );
+expect( 'cartesian 2x2 = 4 variations', ! is_wp_error( $p4 ) && 4 === count( $p4['rows'][0]['variations'] ) );
+expect( 'cartesian combo[3] = L? no — (M,Biru)', ! is_wp_error( $p4 ) && 'M' === $p4['rows'][0]['variations'][3]['attributes']['pa_ukuran'] );
 
-echo $fail > 0 ? "\n$fail TEST GAGAL\n" : "\nSEMUA TEST PASS\n";
+echo $fail > 0 ? "\n$fail TESTS FAILED\n" : "\nALL TESTS PASSED\n";
 exit( $fail > 0 ? 1 : 0 );

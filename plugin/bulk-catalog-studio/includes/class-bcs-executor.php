@@ -47,14 +47,14 @@ class BCS_Executor {
 
 		$plan_row = self::get_plan_raw( $plan_id );
 		if ( ! $plan_row ) {
-			return new WP_Error( 'bcs_not_found', __( 'Plan tidak ditemukan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Plan not found.', 'bulk-catalog-studio' ) );
 		}
 
 		$plan  = BCS_Plan_Builder::decode_plan( $plan_row );
 		$job_id = absint( $plan_row->job_id );
 
 		if ( empty( $plan['operations'] ) || ! is_array( $plan['operations'] ) ) {
-			return new WP_Error( 'bcs_invalid_plan', __( 'Plan tidak memiliki operasi yang valid.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_invalid_plan', __( 'Plan has no valid operations.', 'bulk-catalog-studio' ) );
 		}
 
 		/* ----- Dry run: validasi tanpa efek samping, tanpa state change ----- */
@@ -132,7 +132,7 @@ class BCS_Executor {
 				BCS_Audit_Logger::log_row(
 					'bcs/execute-batch', 'skip_duplicate', 'skipped', $row_index,
 					$sku, isset( $op['target_product_id'] ) ? (int) $op['target_product_id'] : null,
-					__( 'Baris dilewati sesuai plan (kebijakan duplikat).', 'bulk-catalog-studio' ),
+					__( 'Row skipped per plan (duplicate policy).', 'bulk-catalog-studio' ),
 					$row_key, $job_id, $plan_id
 				);
 				$counts['skipped']++;
@@ -184,10 +184,10 @@ class BCS_Executor {
 				BCS_Audit_Logger::log_row(
 					'bcs/execute-batch', 'create_product', 'ok', $row_index, $sku, (int) $result['product_id'],
 					0 === (int) ( $result['variations_created'] ?? 0 )
-						? __( 'Produk simple dibuat.', 'bulk-catalog-studio' )
+						? __( 'Simple product created.', 'bulk-catalog-studio' )
 						: sprintf(
 							/* translators: 1: jumlah variasi, 2: id produk */
-							__( 'Produk variable dibuat dengan %1$d variasi (produk #%2$d).', 'bulk-catalog-studio' ),
+							__( 'Variable product created with %1$d variations (product #%2$d).', 'bulk-catalog-studio' ),
 							(int) $result['variations_created'],
 							(int) $result['product_id']
 						) . ( ! empty( $warnings ) ? ' ' . implode( ' ', $warnings ) : '' ),
@@ -200,7 +200,7 @@ class BCS_Executor {
 						'bcs/execute-batch', 'create_variations', 'ok', $row_index, $sku, (int) $result['product_id'],
 						sprintf(
 							/* translators: 1: jumlah variasi */
-							__( '%d variasi tersimpan untuk produk.', 'bulk-catalog-studio' ),
+							__( '%d variations saved for the product.', 'bulk-catalog-studio' ),
 							(int) $result['variations_created']
 						),
 						$row_key, $job_id, $plan_id
@@ -211,7 +211,7 @@ class BCS_Executor {
 
 				BCS_Audit_Logger::log_row(
 					'bcs/execute-batch', 'update_product', 'ok', $row_index, $sku, (int) $result['product_id'],
-					__( 'Produk diperbarui sesuai payload.', 'bulk-catalog-studio' ) . ( ! empty( $warnings ) ? ' ' . implode( ' ', $warnings ) : '' ),
+					__( 'Product updated per payload.', 'bulk-catalog-studio' ) . ( ! empty( $warnings ) ? ' ' . implode( ' ', $warnings ) : '' ),
 					$row_key, $job_id, $plan_id
 				);
 			}
@@ -242,7 +242,7 @@ class BCS_Executor {
 					'count_updated'    => $counts['products_updated'],
 					'count_variations' => $counts['variations_created'],
 					'count_skipped'    => $counts['skipped'],
-					'last_error'       => 'bcs_deferred: time budget tercapai; lanjutkan dengan resume=true',
+					'last_error'       => 'bcs_deferred: time budget reached; continue with resume=true',
 				)
 			);
 			BCS_Job_Manager::heartbeat( $job_id );
@@ -250,12 +250,12 @@ class BCS_Executor {
 			$failures[] = array(
 				'row_index' => 0,
 				'sku'       => null,
-				'reason'    => __( 'Anggaran waktu request tercapai — sebagian operasi ditunda. Panggil ulang bcs-execute-batch dengan resume=true (idempotent).', 'bulk-catalog-studio' ),
+				'reason'    => __( 'Request time budget reached — some operations were deferred. Call bcs-execute-batch again with resume=true (idempotent).', 'bulk-catalog-studio' ),
 			);
 
 			BCS_Audit_Logger::log_call(
 				'bcs/execute-batch', 'execute_batch', 'failed',
-				__( 'Eksekusi ditunda karena waktu (deferred); job tetap executing untuk resume.', 'bulk-catalog-studio' ),
+				__( 'Execution deferred due to the time budget; the job remains executing for resume.', 'bulk-catalog-studio' ),
 				$job_id, $plan_id
 			);
 
@@ -311,7 +311,7 @@ class BCS_Executor {
 			'bcs/execute-batch', 'execute_batch', 'ok',
 			sprintf(
 				/* translators: 1: status, 2: dibuat, 3: diupdate, 4: variasi, 5: gagal */
-				__( 'Eksekusi selesai: %1$s (created %2$d, updated %3$d, variations %4$d, failed %5$d).', 'bulk-catalog-studio' ),
+				__( 'Execution finished: %1$s (created %2$d, updated %3$d, variations %4$d, failed %5$d).', 'bulk-catalog-studio' ),
 				$final_status,
 				$counts['products_created'],
 				$counts['products_updated'],
@@ -390,7 +390,7 @@ class BCS_Executor {
 			'bcs/execute-batch', 'execute_batch_dry_run', 'ok',
 			sprintf(
 				/* translators: 1: dibuat, 2: diupdate, 3: gagal */
-				__( 'Dry run selesai (simulasi): created %1$d, updated %2$d, failed %3$d. Tidak ada perubahan state.', 'bulk-catalog-studio' ),
+				__( 'Dry run finished (simulation): created %1$d, updated %2$d, failed %3$d. No state was changed.', 'bulk-catalog-studio' ),
 				$counts['products_created'],
 				$counts['products_updated'],
 				$counts['failed']

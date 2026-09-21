@@ -33,9 +33,9 @@ bcs_require_wp || bcs_finish
 # --- 5. Plugin aktif: bulk-catalog-studio, woocommerce, mcp-adapter ---------
 for plugin in bulk-catalog-studio woocommerce mcp-adapter; do
 	if bcs_wp plugin list --status=active --field=name 2>/dev/null | grep -qx "$plugin"; then
-		bcs_pass "plugin-active-$plugin" "$plugin aktif"
+		bcs_pass "plugin-active-$plugin" "$plugin is active"
 	else
-		bcs_stop "plugin-active-$plugin" "plugin $plugin TIDAK aktif — STOP, aktifkan dulu"
+		bcs_stop "plugin-active-$plugin" "$plugin is NOT active — STOP and activate it first"
 	fi
 done
 
@@ -44,48 +44,48 @@ permalink="$(bcs_wp option get permalink_structure 2>/dev/null | tail -n 1 || tr
 if [ -n "$permalink" ]; then
 	bcs_pass "permalink" "permalink_structure=$permalink"
 else
-	bcs_stop "permalink" "permalink_structure kosong (Plain) — endpoint MCP HTTP tidak akan bekerja"
+	bcs_stop "permalink" "permalink_structure is empty (Plain) — the HTTP MCP endpoint will not work"
 fi
 
 # --- 7. Ability bcs/parse-source terdaftar di registry WP -------------------
 if [ "$(bcs_wp eval 'echo wp_has_ability("bcs/parse-source") ? "yes" : "no";' 2>/dev/null | tail -n 1 || true)" = "yes" ]; then
-	bcs_pass "abilities-registered" "bcs/parse-source ada di registry (sumber 8 tool custom server)"
+	bcs_pass "abilities-registered" "bcs/parse-source is registered (source for 8 custom-server tools)"
 else
-	bcs_stop "abilities-registered" "bcs/parse-source TIDAK terdaftar — custom server tidak akan mengekspos tool bcs-*"
+	bcs_stop "abilities-registered" "bcs/parse-source is NOT registered — the custom server will not expose bcs-* tools"
 fi
 
 # --- 8. Tabel bcs_* ada (aktivasi sukses) -----------------------------------
 prefix="$(bcs_table_prefix)"
 tables_found="$(bcs_db_scalar "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('${prefix}bcs_jobs','${prefix}bcs_plans','${prefix}bcs_audit');")" || tables_found=""
 if [ "${tables_found:-0}" -ge 3 ] 2>/dev/null; then
-	bcs_pass "bcs-tables" "3 tabel bcs_* ada (prefix: $prefix)"
+	bcs_pass "bcs-tables" "3 bcs_* tables exist (prefix: $prefix)"
 else
-	bcs_stop "bcs-tables" "tabel bcs_* kurang dari 3 (ditemukan: ${tables_found:-?}) — jalankan aktivasi plugin"
+	bcs_stop "bcs-tables" "fewer than 3 bcs_* tables found (${tables_found:-?}) — activate the plugin"
 fi
 
 # --- 9. Fixture CSV tersedia -------------------------------------------------
 if [ -s "$BCS_FIXTURE" ]; then
 	rows="$(awk 'END{print NR-1}' "$BCS_FIXTURE" || true)"
-	bcs_pass "fixture" "$BCS_FIXTURE ($rows baris data)"
+	bcs_pass "fixture" "$BCS_FIXTURE ($rows data rows)"
 else
-	bcs_stop "fixture" "fixture tidak ditemukan/kosong: $BCS_FIXTURE (set BCS_FIXTURE)"
+	bcs_stop "fixture" "fixture not found or empty: $BCS_FIXTURE (set BCS_FIXTURE)"
 fi
 
 # --- 10. Endpoint custom tanpa auth harus 401 (bukan 200) -------------------
 http_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$BCS_MCP_ENDPOINT" 2>/dev/null || echo '000')"
 if [ "$http_code" = "401" ]; then
-	bcs_pass "endpoint-401-unauth" "$BCS_MCP_ENDPOINT tanpa auth → 401 (sesuai harapan)"
+	bcs_pass "endpoint-401-unauth" "$BCS_MCP_ENDPOINT without auth → 401 (as expected)"
 elif [ "$http_code" = "000" ]; then
-	bcs_fail "endpoint-401-unauth" "endpoint $BCS_MCP_ENDPOINT tidak terjangkau dari host ini"
+	bcs_fail "endpoint-401-unauth" "endpoint $BCS_MCP_ENDPOINT is unreachable from this host"
 else
-	bcs_fail "endpoint-401-unauth" "endpoint tanpa auth balik HTTP $http_code (harusnya 401)"
+	bcs_fail "endpoint-401-unauth" "unauthenticated endpoint returned HTTP $http_code (expected 401)"
 fi
 
 # --- 11. Initialize custom server → Mcp-Session-Id --------------------------
 if bcs_http_session > /tmp/bcs-e2e-session.txt 2>/dev/null; then
-	bcs_pass "http-initialize" "Mcp-Session-Id didapat dari $BCS_MCP_ENDPOINT (initialize OK)"
+	bcs_pass "http-initialize" "received Mcp-Session-Id from $BCS_MCP_ENDPOINT (initialize OK)"
 else
-	bcs_stop "http-initialize" "initialize ke custom server gagal — cek BCS_WP_USER/BCS_APP_PASSWORD (Application Password) & endpoint"
+	bcs_stop "http-initialize" "custom-server initialize failed — check BCS_WP_USER/BCS_APP_PASSWORD (Application Password) and endpoint"
 fi
 
 bcs_finish

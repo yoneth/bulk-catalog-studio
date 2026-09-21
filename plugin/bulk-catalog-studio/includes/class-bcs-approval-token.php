@@ -43,11 +43,11 @@ class BCS_Approval_Token {
 		$table  = $wpdb->prefix . 'bcs_plans';
 		$plan   = self::get_plan( $plan_id );
 		if ( ! $plan ) {
-			return new WP_Error( 'bcs_not_found', __( 'Plan tidak ditemukan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Plan not found.', 'bulk-catalog-studio' ) );
 		}
 
 		if ( hash_equals( (string) $plan->plan_hash, (string) $plan_hash ) === false ) {
-			return new WP_Error( 'bcs_hash_mismatch', __( 'plan_hash tidak cocok dengan plan tersimpan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_hash_mismatch', __( 'plan_hash does not match the stored plan.', 'bulk-catalog-studio' ) );
 		}
 
 		// MINOR-1 (retur QA-1): 8 karakter (±39 bit entropy, charset 31) —
@@ -76,7 +76,7 @@ class BCS_Approval_Token {
 		);
 
 		if ( false === $updated ) {
-			return new WP_Error( 'bcs_db_error', __( 'Gagal menyimpan token approval.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_db_error', __( 'Failed to store the approval token.', 'bulk-catalog-studio' ) );
 		}
 
 		return $token;
@@ -95,37 +95,37 @@ class BCS_Approval_Token {
 
 		$plan = self::get_plan( $plan_id );
 		if ( ! $plan ) {
-			return new WP_Error( 'bcs_not_found', __( 'Plan tidak ditemukan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Plan not found.', 'bulk-catalog-studio' ) );
 		}
 
 		// Token terikat plan_hash (spec §5.5.7): plan yang berubah diam-diam gugur.
 		if ( hash_equals( (string) $plan->plan_hash, (string) $plan_hash ) === false ) {
-			return new WP_Error( 'bcs_hash_mismatch', __( 'plan_hash tidak cocok — plan telah dibangun ulang. Minta diff preview terbaru.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_hash_mismatch', __( 'plan_hash mismatch — the plan was rebuilt. Request a fresh diff preview.', 'bulk-catalog-studio' ) );
 		}
 
 		if ( empty( $plan->token_hash ) ) {
-			return new WP_Error( 'bcs_token_missing', __( 'Belum ada token approval untuk plan ini. Generate token di layar admin (halaman diff).', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_token_missing', __( 'No approval token exists for this plan yet. Generate a token on the admin screen (diff page).', 'bulk-catalog-studio' ) );
 		}
 
 		if ( ! empty( $plan->token_used_at ) ) {
-			return new WP_Error( 'bcs_token_used', __( 'Token sudah pernah dipakai (single-use). Generate token baru di layar admin.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_token_used', __( 'The token has already been used (single-use). Generate a new token on the admin screen.', 'bulk-catalog-studio' ) );
 		}
 
 		if ( ! empty( $plan->token_expires_at ) ) {
 			$expires = strtotime( $plan->token_expires_at . ' UTC' );
 			if ( $expires < time() ) {
-				return new WP_Error( 'bcs_token_expired', __( 'Token kedaluwarsa (24 jam). Generate token baru di layar admin.', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_token_expired', __( 'The token has expired (24 hours). Generate a new token on the admin screen.', 'bulk-catalog-studio' ) );
 			}
 		}
 
 		$token = strtoupper( trim( (string) $confirmation_token ) );
 
 		if ( ! preg_match( '/^[A-Z0-9-]{6,12}$/', $token ) ) {
-			return new WP_Error( 'bcs_token_invalid', __( 'Format token tidak valid (harus 6–12 karakter A-Z0-9-).', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_token_invalid', __( 'Invalid token format (must be 6–12 characters A-Z0-9-).', 'bulk-catalog-studio' ) );
 		}
 
 		if ( ! wp_check_password( $token, (string) $plan->token_hash, 0 ) ) {
-			return new WP_Error( 'bcs_token_invalid', __( 'Token salah. Token hanya tampil di layar admin WP (halaman diff).', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_token_invalid', __( 'Wrong token. The token is only shown on the WP admin screen (diff page).', 'bulk-catalog-studio' ) );
 		}
 
 		return true;
@@ -162,7 +162,7 @@ class BCS_Approval_Token {
 		);
 
 		if ( 1 !== (int) $affected ) {
-			return new WP_Error( 'bcs_token_used', __( 'Token sudah dikonsumsi oleh proses lain (single-use atomik).', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_token_used', __( 'The token was already consumed by another process (atomic single-use).', 'bulk-catalog-studio' ) );
 		}
 
 		return true;

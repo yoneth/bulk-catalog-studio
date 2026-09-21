@@ -34,7 +34,7 @@ class BCS_Abilities {
 			'bcs',
 			array(
 				'label'       => __( 'Bulk Catalog Studio', 'bulk-catalog-studio' ),
-				'description' => __( 'Mengubah sumber data tabular (CSV / Google Sheet export / rows prompt) menjadi produk WooCommerce native melalui pipeline parse → duplicate-check → plan → human approval → execute → rollback.', 'bulk-catalog-studio' ),
+				'description' => __( 'Turns tabular data sources (CSV / Google Sheets export / prompt rows) into native WooCommerce products through the pipeline parse → duplicate-check → plan → human approval → execute → rollback.', 'bulk-catalog-studio' ),
 			)
 		);
 	}
@@ -70,7 +70,7 @@ class BCS_Abilities {
 		return array(
 			'bcs/parse-source'      => array(
 				'label'               => __( 'BCS: Parse Source', 'bulk-catalog-studio' ),
-				'description'         => __( 'Ambil sumber data (CSV inline, attachment media library, atau URL export CSV publik Google Sheets), parse, normalisasi header, validasi tipe, lalu buat job baru berstatus parsed. Read-only terhadap katalog: hanya menulis baris job + plan staging.', 'bulk-catalog-studio' ),
+				'description'         => __( 'Fetch a data source (inline CSV, media library attachment, or public Google Sheets CSV export URL), parse it, normalize headers, validate types, then create a new job with status parsed. Read-only for the catalog: only job rows + staging plans are written.', 'bulk-catalog-studio' ),
 				'category'            => 'bcs',
 				'input_schema'        => BCS_Schemas::input( 'bcs/parse-source' ),
 				'output_schema'       => BCS_Schemas::output( 'bcs/parse-source' ),
@@ -86,7 +86,7 @@ class BCS_Abilities {
 
 			'bcs/check-duplicates'  => array(
 				'label'               => __( 'BCS: Check Duplicates', 'bulk-catalog-studio' ),
-				'description'         => __( 'Cek duplikasi antar baris dalam job dan baris vs katalog existing (SKU exact; opsional nama normalized). Read-only — hasil disimpan di job, tidak mengubah produk.', 'bulk-catalog-studio' ),
+				'description'         => __( 'Check duplicates between rows within a job and rows against the existing catalog (exact SKU; optional normalized name). Read-only — results are stored on the job, no products are changed.', 'bulk-catalog-studio' ),
 				'category'            => 'bcs',
 				'input_schema'        => BCS_Schemas::input( 'bcs/check-duplicates' ),
 				'output_schema'       => BCS_Schemas::output( 'bcs/check-duplicates' ),
@@ -97,7 +97,7 @@ class BCS_Abilities {
 
 			'bcs/build-plan'        => array(
 				'label'               => __( 'BCS: Build Plan', 'bulk-catalog-studio' ),
-				'description'         => __( 'Ubah rows hasil parse + hasil duplicate-check menjadi plan eksekusi materialized (create/update/skip + payload final + snapshot before untuk update). Read-only terhadap katalog. Plan immutable: plan_hash menjadi dasar validasi approval. Token approval HANYA ditampilkan di layar admin WP.', 'bulk-catalog-studio' ),
+				'description'         => __( 'Turn parsed rows + duplicate-check results into a materialized execution plan (create/update/skip + final payload + before snapshot for updates). Read-only for the catalog. Plans are immutable: the plan_hash is the basis of approval validation. The approval token is ONLY shown on the WP admin screen.', 'bulk-catalog-studio' ),
 				'category'            => 'bcs',
 				'input_schema'        => BCS_Schemas::input( 'bcs/build-plan' ),
 				'output_schema'       => BCS_Schemas::output( 'bcs/build-plan' ),
@@ -108,7 +108,7 @@ class BCS_Abilities {
 
 			'bcs/approve-plan'      => array(
 				'label'               => __( 'BCS: Approve Plan', 'bulk-catalog-studio' ),
-				'description'         => __( 'Gerbang approval manusia: validasi confirmation_token one-time (hanya tampil di layar admin WP diff) terhadap plan_hash, lalu transisi planned → approved. Token single-use, kedaluwarsa 24 jam, terikat plan_hash.', 'bulk-catalog-studio' ),
+				'description'         => __( 'Human approval gate: validate the one-time confirmation_token (only shown on the WP admin diff screen) against the plan_hash, then transition planned → approved. Tokens are single-use, expire after 24 hours, and are bound to the plan_hash.', 'bulk-catalog-studio' ),
 				'category'            => 'bcs',
 				'input_schema'        => BCS_Schemas::input( 'bcs/approve-plan' ),
 				'output_schema'       => BCS_Schemas::output( 'bcs/approve-plan' ),
@@ -119,7 +119,7 @@ class BCS_Abilities {
 
 			'bcs/execute-batch'     => array(
 				'label'               => __( 'BCS: Execute Batch', 'bulk-catalog-studio' ),
-				'description'         => __( 'Eksekusi plan yang sudah approved lewat WC_Product CRUD dalam chunk 10 operasi dengan heartbeat; idempotent per baris (row_key); mendukung dry_run (simulasi tanpa tulis) dan resume (lanjutkan job executing yang stale). Satu-satunya ability yang membuat/mengubah produk.', 'bulk-catalog-studio' ),
+				'description'         => __( 'Execute an approved plan through WC_Product CRUD in chunks of 10 operations with heartbeat; idempotent per row (row_key); supports dry_run (simulation without writes) and resume (continue a stale executing job). The only ability that creates/modifies products.', 'bulk-catalog-studio' ),
 				'category'            => 'bcs',
 				'input_schema'        => BCS_Schemas::input( 'bcs/execute-batch' ),
 				'output_schema'       => BCS_Schemas::output( 'bcs/execute-batch' ),
@@ -130,7 +130,7 @@ class BCS_Abilities {
 
 			'bcs/job-status'        => array(
 				'label'               => __( 'BCS: Job Status', 'bulk-catalog-studio' ),
-				'description'         => __( 'Tanpa job_id: list 20 job terbaru (untuk resuming antar sesi). Dengan job_id: detail satu job termasuk staleness heartbeat. Read-only.', 'bulk-catalog-studio' ),
+				'description'         => __( 'Without job_id: list the 20 latest jobs (for resuming across sessions). With job_id: details of one job including heartbeat staleness. Read-only.', 'bulk-catalog-studio' ),
 				'category'            => 'bcs',
 				'input_schema'        => BCS_Schemas::input( 'bcs/job-status' ),
 				'output_schema'       => BCS_Schemas::output( 'bcs/job-status' ),
@@ -141,7 +141,7 @@ class BCS_Abilities {
 
 			'bcs/rollback-batch'    => array(
 				'label'               => __( 'BCS: Rollback Batch', 'bulk-catalog-studio' ),
-				'description'         => __( 'Batalkan efek job done/partially_failed: produk baru → trash beserta variasinya (soft), produk update → dikembalikan ke snapshot before. Wajib confirm=true. Teraudit per baris.', 'bulk-catalog-studio' ),
+				'description'         => __( 'Undo the effects of a done/partially_failed job: new products → trashed along with their variations (soft), updated products → restored to the before snapshot. Requires confirm=true. Audited per row.', 'bulk-catalog-studio' ),
 				'category'            => 'bcs',
 				'input_schema'        => BCS_Schemas::input( 'bcs/rollback-batch' ),
 				'output_schema'       => BCS_Schemas::output( 'bcs/rollback-batch' ),
@@ -152,7 +152,7 @@ class BCS_Abilities {
 
 			'bcs/audit-log'         => array(
 				'label'               => __( 'BCS: Audit Log', 'bulk-catalog-studio' ),
-				'description'         => __( 'Tarik entri audit untuk satu job (level call dan row), urut waktu, paginasi. Untuk verifikasi manusia maupun Claude. Read-only.', 'bulk-catalog-studio' ),
+				'description'         => __( 'Fetch audit entries for one job (call and row levels), ordered by time, paginated. For human and Claude verification. Read-only.', 'bulk-catalog-studio' ),
 				'category'            => 'bcs',
 				'input_schema'        => BCS_Schemas::input( 'bcs/audit-log' ),
 				'output_schema'       => BCS_Schemas::output( 'bcs/audit-log' ),
@@ -172,7 +172,7 @@ class BCS_Abilities {
 	 */
 	private static function meta( array $annotations ) {
 		$base = array(
-			'instructions' => __( 'Bagian dari pipeline Bulk Catalog Studio. Ikuti urutan gerbang: parse → duplicate-check → build-plan → approval manusia (token dari layar admin) → execute. Jangan mencoba menulis produk tanpa approval.', 'bulk-catalog-studio' ),
+			'instructions' => __( 'Part of the Bulk Catalog Studio pipeline. Follow the gate order: parse → duplicate-check → build-plan → human approval (token from the admin screen) → execute. Never attempt to write products without approval.', 'bulk-catalog-studio' ),
 		);
 
 		return array(
@@ -199,7 +199,7 @@ class BCS_Abilities {
 			return true;
 		}
 
-		return new WP_Error( 'bcs_forbidden', __( 'Butuh capability edit_products.', 'bulk-catalog-studio' ) );
+		return new WP_Error( 'bcs_forbidden', __( 'Requires the edit_products capability.', 'bulk-catalog-studio' ) );
 	}
 
 	/**
@@ -212,7 +212,7 @@ class BCS_Abilities {
 			return true;
 		}
 
-		return new WP_Error( 'bcs_forbidden', __( 'Butuh capability manage_woocommerce.', 'bulk-catalog-studio' ) );
+		return new WP_Error( 'bcs_forbidden', __( 'Requires the manage_woocommerce capability.', 'bulk-catalog-studio' ) );
 	}
 
 	/* ---------------------------------------------------------------------
@@ -230,7 +230,7 @@ class BCS_Abilities {
 	private static function server_guard( $capability, $ability ) {
 		// Defense-in-depth: transport bukan pengganti otorisasi (spec §5.5.5).
 		if ( ! current_user_can( $capability ) ) {
-			$error = new WP_Error( 'bcs_forbidden', __( 'Capability tidak memenuhi syarat (diperiksa ulang di server).', 'bulk-catalog-studio' ) );
+			$error = new WP_Error( 'bcs_forbidden', __( 'Capability check failed (re-checked server-side).', 'bulk-catalog-studio' ) );
 
 			BCS_Audit_Logger::log_call( $ability, 'call_guard', 'failed', $error->get_error_message() );
 
@@ -249,9 +249,9 @@ class BCS_Abilities {
 				'bcs_rate_limited',
 				sprintf(
 					/* translators: 1: limit, 2: satuan waktu */
-					__( 'Melebihi rate limit %1$d panggilan per %2$s. Coba lagi sebentar.', 'bulk-catalog-studio' ),
+					__( 'Rate limit of %1$d calls per %2$s exceeded. Try again shortly.', 'bulk-catalog-studio' ),
 					$limit,
-					__( 'menit', 'bulk-catalog-studio' )
+					__( 'minute', 'bulk-catalog-studio' )
 				)
 			);
 
@@ -311,23 +311,23 @@ class BCS_Abilities {
 			$csv_text = (string) self::in( $input, 'csv_text', '' );
 
 			if ( '' === trim( $csv_text ) ) {
-				return new WP_Error( 'bcs_invalid_input', __( 'csv_text wajib diisi bila source_type=inline_csv.', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_invalid_input', __( 'csv_text is required when source_type=inline_csv.', 'bulk-catalog-studio' ) );
 			}
 
 			if ( strlen( $csv_text ) > (int) BCS_Settings::get( 'max_inline_bytes', 2000000 ) ) {
-				return new WP_Error( 'bcs_too_large', __( 'csv_text melebihi batas 2 MB.', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_too_large', __( 'csv_text exceeds the 2 MB limit.', 'bulk-catalog-studio' ) );
 			}
 		} elseif ( 'attachment' === $source_type ) {
 			$attachment_id = absint( self::in( $input, 'attachment_id', 0 ) );
 
 			if ( $attachment_id < 1 ) {
-				return new WP_Error( 'bcs_invalid_input', __( 'attachment_id wajib diisi bila source_type=attachment.', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_invalid_input', __( 'attachment_id is required when source_type=attachment.', 'bulk-catalog-studio' ) );
 			}
 
 			$attachment = get_post( $attachment_id );
 
 			if ( ! $attachment || 'attachment' !== $attachment->post_type ) {
-				return new WP_Error( 'bcs_invalid_input', __( 'attachment_id bukan post_type attachment.', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_invalid_input', __( 'attachment_id is not a post_type attachment.', 'bulk-catalog-studio' ) );
 			}
 
 			// NIT-1 (retur QA-1): .xls biner dihapus — tidak bisa diparse fgetcsv.
@@ -337,7 +337,7 @@ class BCS_Abilities {
 					'bcs_invalid_input',
 					sprintf(
 						/* translators: %s: mime type */
-						__( 'Mime attachment "%s" tidak didukung (harus CSV/text).', 'bulk-catalog-studio' ),
+						__( 'Attachment mime type "%s" is not supported (must be CSV/text).', 'bulk-catalog-studio' ),
 						(string) $attachment->post_mime_type
 					)
 				);
@@ -345,11 +345,11 @@ class BCS_Abilities {
 
 			$file = get_attached_file( $attachment_id );
 			if ( ! $file || ! file_exists( $file ) ) {
-				return new WP_Error( 'bcs_invalid_input', __( 'File attachment tidak ditemukan di disk.', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_invalid_input', __( 'Attachment file not found on disk.', 'bulk-catalog-studio' ) );
 			}
 
 			if ( filesize( $file ) > (int) BCS_Settings::get( 'max_attachment_bytes', 10485760 ) ) {
-				return new WP_Error( 'bcs_too_large', __( 'Attachment melebihi batas 10 MB.', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_too_large', __( 'Attachment exceeds the 10 MB limit.', 'bulk-catalog-studio' ) );
 			}
 
 			$csv_text = (string) file_get_contents( $file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- baca file attachment milik situs.
@@ -359,18 +359,18 @@ class BCS_Abilities {
 			}
 		} elseif ( 'url' === $source_type ) {
 			if ( ! (bool) BCS_Settings::get( 'allow_url_source', true ) ) {
-				return new WP_Error( 'bcs_disabled', __( 'Sumber URL dinonaktifkan di settings.', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_disabled', __( 'URL sources are disabled in settings.', 'bulk-catalog-studio' ) );
 			}
 
 			$url = esc_url_raw( (string) self::in( $input, 'url', '' ) );
 
 			if ( '' === $url || ! wp_http_validate_url( $url ) ) {
-				return new WP_Error( 'bcs_invalid_input', __( 'url tidak valid.', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_invalid_input', __( 'Invalid URL.', 'bulk-catalog-studio' ) );
 			}
 
 			// Hanya https (spec §1.1).
 			if ( 0 !== strpos( $url, 'https://' ) ) {
-				return new WP_Error( 'bcs_invalid_input', __( 'Hanya URL https yang diizinkan (spec §1.1).', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_invalid_input', __( 'Only https URLs are allowed (spec §1.1).', 'bulk-catalog-studio' ) );
 			}
 
 			$host = wp_parse_url( $url, PHP_URL_HOST );
@@ -383,7 +383,7 @@ class BCS_Abilities {
 					'bcs_host_not_allowed',
 					sprintf(
 						/* translators: 1: host */
-						__( 'Host "%1$s" tidak diizinkan. V1 hanya menerima export CSV publik dari docs.google.com (batas SSRF, retur QA-1).', 'bulk-catalog-studio' ),
+						__( 'Host "%1$s" is not allowed. V1 only accepts public CSV exports from docs.google.com (SSRF guard, QA-1 rework).', 'bulk-catalog-studio' ),
 						(string) $host
 					)
 				);
@@ -391,7 +391,7 @@ class BCS_Abilities {
 
 			// MAJOR-1: khusus Google Sheets wajib endpoint export CSV.
 			if ( false === strpos( $url, 'output=csv' ) && false === strpos( $url, 'format=csv' ) ) {
-				return new WP_Error( 'bcs_invalid_input', __( 'Google Sheets harus memakai endpoint export CSV publik (…/export?format=csv).', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_invalid_input', __( 'Google Sheets must use the public CSV export endpoint (…/export?format=csv).', 'bulk-catalog-studio' ) );
 			}
 
 			// MAJOR-1: resolve host + tolak IP privat/loopback/link-local
@@ -416,7 +416,7 @@ class BCS_Abilities {
 					'bcs_fetch_failed',
 					sprintf(
 						/* translators: %d: HTTP status */
-						__( 'Gagal mengambil URL (HTTP %d). Pastikan sheet publik.', 'bulk-catalog-studio' ),
+						__( 'Failed to fetch the URL (HTTP %d). Make sure the sheet is public.', 'bulk-catalog-studio' ),
 						(int) wp_remote_retrieve_response_code( $response )
 					)
 				);
@@ -428,7 +428,7 @@ class BCS_Abilities {
 				$source_name = $host;
 			}
 		} else {
-			return new WP_Error( 'bcs_invalid_input', __( 'source_type tidak dikenal.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_invalid_input', __( 'Unknown source_type.', 'bulk-catalog-studio' ) );
 		}
 
 		/* --- Parse --- */
@@ -482,7 +482,7 @@ class BCS_Abilities {
 		if ( $duplicate_of ) {
 			$warnings[] = sprintf(
 				/* translators: %d: job id */
-				__( 'Sumber identik (sha1 sama) dengan job #%d — kemungkinan upload ganda.', 'bulk-catalog-studio' ),
+				__( 'Source identical (same sha1) to job #%d — likely a duplicate upload.', 'bulk-catalog-studio' ),
 				$duplicate_of
 			);
 		}
@@ -491,7 +491,7 @@ class BCS_Abilities {
 			'bcs/parse-source', 'parse_source', 'ok',
 			sprintf(
 				/* translators: 1: id job, 2: jumlah baris */
-				__( 'Job #%1$d dibuat dengan %2$d baris.', 'bulk-catalog-studio' ),
+				__( 'Job #%1$d created with %2$d rows.', 'bulk-catalog-studio' ),
 				$job_id,
 				count( $parsed['rows'] )
 			),
@@ -539,7 +539,7 @@ class BCS_Abilities {
 		$host = trim( (string) $host );
 
 		if ( '' === $host ) {
-			return new WP_Error( 'bcs_invalid_input', __( 'Host URL kosong.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_invalid_input', __( 'URL host is empty.', 'bulk-catalog-studio' ) );
 		}
 
 		// Jika host itu sendiri literal IP, validasi langsung.
@@ -550,7 +550,7 @@ class BCS_Abilities {
 			if ( $resolved === $host ) {
 				return new WP_Error(
 					'bcs_dns_failure',
-					__( 'Gagal me-resolve host sumber — URL ditolak.', 'bulk-catalog-studio' )
+					__( 'Failed to resolve the source host — URL rejected.', 'bulk-catalog-studio' )
 				);
 			}
 			$ips = array( $resolved );
@@ -562,7 +562,7 @@ class BCS_Abilities {
 					'bcs_private_ip_blocked',
 					sprintf(
 						/* translators: 1: IP */
-						__( 'Host me-resolve ke IP privat/loopback/link-local (%1$s) — diblokir (SSRF, retur QA-1).', 'bulk-catalog-studio' ),
+						__( 'Host resolves to a private/loopback/link-local IP (%1$s) — blocked (SSRF guard, QA-1 rework).', 'bulk-catalog-studio' ),
 						(string) $ip
 					)
 				);
@@ -708,7 +708,7 @@ class BCS_Abilities {
 			'bcs/check-duplicates', 'check_duplicates', 'ok',
 			sprintf(
 				/* translators: 1: jumlah duplikat */
-				__( 'Ditemukan %d duplikat.', 'bulk-catalog-studio' ),
+				__( 'Found %d duplicate(s).', 'bulk-catalog-studio' ),
 				(int) $result['duplicate_count']
 			),
 			$job_id, 0, $result
@@ -746,7 +746,7 @@ class BCS_Abilities {
 			'bcs/build-plan', 'build_plan', 'ok',
 			sprintf(
 				/* translators: 1: plan id, 2: total operasi */
-				__( 'Plan #%1$d dibangun dengan %2$d operasi.', 'bulk-catalog-studio' ),
+				__( 'Plan #%1$d built with %2$d operations.', 'bulk-catalog-studio' ),
 				(int) $result['plan_id'],
 				(int) $result['summary']['total_operations']
 			),
@@ -774,7 +774,7 @@ class BCS_Abilities {
 
 		$plan_row = BCS_Plan_Builder::get_plan_row( $plan_id );
 		if ( ! $plan_row ) {
-			return new WP_Error( 'bcs_not_found', __( 'Plan tidak ditemukan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Plan not found.', 'bulk-catalog-studio' ) );
 		}
 
 		$job_id = (int) $plan_row->job_id;
@@ -786,7 +786,7 @@ class BCS_Abilities {
 				'bcs_invalid_state',
 				sprintf(
 					/* translators: %s: status plan */
-					__( 'approve-plan hanya untuk plan berstatus planned (status plan saat ini: %s — kemungkinan sudah digantikan plan lebih baru).', 'bulk-catalog-studio' ),
+					__( 'approve-plan only works on plans with status planned (current plan status: %s — it may have been superseded by a newer plan).', 'bulk-catalog-studio' ),
 					(string) $plan_row->status
 				)
 			);
@@ -802,7 +802,7 @@ class BCS_Abilities {
 				'bcs_invalid_state',
 				sprintf(
 					/* translators: %s: status job */
-					__( 'approve-plan hanya untuk job berstatus planned (status saat ini: %s).', 'bulk-catalog-studio' ),
+					__( 'approve-plan only works on jobs with status planned (current status: %s).', 'bulk-catalog-studio' ),
 					$job ? $job['status'] : 'unknown'
 				)
 			);
@@ -820,7 +820,7 @@ class BCS_Abilities {
 				$verify->get_error_code(),
 				sprintf(
 					/* translators: 1: alasan */
-					__( 'Approval ditolak: %1$s', 'bulk-catalog-studio' ),
+					__( 'Approval rejected: %1$s', 'bulk-catalog-studio' ),
 					$verify->get_error_message()
 				)
 			);
@@ -850,7 +850,7 @@ class BCS_Abilities {
 			'bcs/approve-plan', 'approve_plan', 'ok',
 			sprintf(
 				/* translators: 1: plan id, 2: user id */
-				__( 'Plan #%1$d diapprove oleh user #%2$d via token one-time.', 'bulk-catalog-studio' ),
+				__( 'Plan #%1$d approved by user #%2$d via one-time token.', 'bulk-catalog-studio' ),
 				$plan_id,
 				get_current_user_id()
 			),
@@ -912,7 +912,7 @@ class BCS_Abilities {
 			$job = BCS_Job_Manager::get( $job_id );
 
 			if ( ! $job ) {
-				return new WP_Error( 'bcs_not_found', __( 'Job tidak ditemukan.', 'bulk-catalog-studio' ) );
+				return new WP_Error( 'bcs_not_found', __( 'Job not found.', 'bulk-catalog-studio' ) );
 			}
 
 			return array(
@@ -952,7 +952,7 @@ class BCS_Abilities {
 			);
 		}
 
-		BCS_Audit_Logger::log_call( 'bcs/job-status', 'job_status', 'ok', sprintf( /* translators: %d: jumlah job */ __( 'List %d job.', 'bulk-catalog-studio' ), count( $jobs ) ) );
+		BCS_Audit_Logger::log_call( 'bcs/job-status', 'job_status', 'ok', sprintf( /* translators: %d: jumlah job */ __( 'Listed %d job(s).', 'bulk-catalog-studio' ), count( $jobs ) ) );
 
 		return array( 'jobs' => $jobs );
 	}
@@ -1003,7 +1003,7 @@ class BCS_Abilities {
 
 		$job = BCS_Job_Manager::get( $job_id );
 		if ( ! $job ) {
-			return new WP_Error( 'bcs_not_found', __( 'Job tidak ditemukan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Job not found.', 'bulk-catalog-studio' ) );
 		}
 
 		$result = BCS_Audit_Logger::query( $job_id, $level, $limit, $offset );
@@ -1012,7 +1012,7 @@ class BCS_Abilities {
 			'bcs/audit-log', 'audit_log', 'ok',
 			sprintf(
 				/* translators: 1: total entri */
-				__( 'Tarik %d entri audit.', 'bulk-catalog-studio' ),
+				__( 'Fetched %d audit entries.', 'bulk-catalog-studio' ),
 				count( $result['entries'] )
 			),
 			$job_id

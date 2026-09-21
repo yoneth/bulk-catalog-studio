@@ -72,7 +72,7 @@ class BCS_CSV_Parser {
 		$errors   = array();
 
 		if ( '' === trim( (string) $csv_text ) ) {
-			return new WP_Error( 'bcs_empty_source', __( 'Sumber CSV kosong.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_empty_source', __( 'Empty CSV source.', 'bulk-catalog-studio' ) );
 		}
 
 		// Normalisasi delimiter + strip BOM + konversi encoding (MINOR-7 retur
@@ -88,7 +88,7 @@ class BCS_CSV_Parser {
 		// Baca seluruh baris via php://temp (aman memory untuk 2 MB).
 		$handle = fopen( 'php://temp', 'r+' );
 		if ( ! $handle ) {
-			return new WP_Error( 'bcs_parse_failed', __( 'Tidak dapat membuka buffer parse.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_parse_failed', __( 'Unable to open the parse buffer.', 'bulk-catalog-studio' ) );
 		}
 		fwrite( $handle, $csv_text );
 		rewind( $handle );
@@ -104,7 +104,7 @@ class BCS_CSV_Parser {
 		fclose( $handle );
 
 		if ( empty( $all_rows ) ) {
-			return new WP_Error( 'bcs_parse_failed', __( 'Tidak ada baris terbaca dari sumber.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_parse_failed', __( 'No rows could be read from the source.', 'bulk-catalog-studio' ) );
 		}
 
 		$headers = array();
@@ -130,7 +130,7 @@ class BCS_CSV_Parser {
 				'bcs_too_many_rows',
 				sprintf(
 					/* translators: 1: jumlah baris, 2: batas keras */
-					__( 'Sumber berisi %1$d baris — melebihi batas keras %2$d baris per job. Pecah menjadi beberapa job.', 'bulk-catalog-studio' ),
+					__( 'Source contains %1$d rows — exceeds the hard limit of %2$d rows per job. Split it into multiple jobs.', 'bulk-catalog-studio' ),
 					$total,
 					(int) $settings['max_rows_hard_limit']
 				)
@@ -142,7 +142,7 @@ class BCS_CSV_Parser {
 				'bcs_too_many_rows',
 				sprintf(
 					/* translators: 1: jumlah baris, 2: batas konfigurasi */
-					__( 'Sumber berisi %1$d baris — melebihi batas %2$d baris per job (setting max_rows_per_job). Pecah atau naikkan setting.', 'bulk-catalog-studio' ),
+					__( 'Source contains %1$d rows — exceeds the limit of %2$d rows per job (max_rows_per_job setting). Split the source or raise the setting.', 'bulk-catalog-studio' ),
 					$total,
 					(int) $settings['max_rows_per_job']
 				)
@@ -158,7 +158,7 @@ class BCS_CSV_Parser {
 			if ( is_wp_error( $normalized ) ) {
 				$errors[] = sprintf(
 					/* translators: 1: nomor baris, 2: pesan error */
-					__( 'Baris %1$d: %2$s', 'bulk-catalog-studio' ),
+					__( 'Row %1$d: %2$s', 'bulk-catalog-studio' ),
 					$row_index,
 					$normalized->get_error_message()
 				);
@@ -248,17 +248,17 @@ class BCS_CSV_Parser {
 			return null;
 		}
 		if ( ! function_exists( 'mb_convert_encoding' ) ) {
-			return __( 'Sumber bukan UTF-8 valid dan mb_convert_encoding tidak tersedia — karakter non-ASCII berisiko rusak.', 'bulk-catalog-studio' );
+			return __( 'Source is not valid UTF-8 and mb_convert_encoding is unavailable — non-ASCII characters may be corrupted.', 'bulk-catalog-studio' );
 		}
 
 		$converted = mb_convert_encoding( $csv_text, 'UTF-8', 'Windows-1252, ISO-8859-1, UTF-8' );
 		if ( is_string( $converted ) && '' !== $converted && mb_check_encoding( $converted, 'UTF-8' ) ) {
 			$csv_text = $converted;
 
-			return __( 'Sumber terdeteksi bukan UTF-8 (diduga Windows-1252/ISO-8859-1) — dikonversi ke UTF-8.', 'bulk-catalog-studio' );
+			return __( 'Source detected as non-UTF-8 (assumed Windows-1252/ISO-8859-1) — converted to UTF-8.', 'bulk-catalog-studio' );
 		}
 
-		return __( 'Sumber bukan UTF-8 valid dan konversi encoding gagal — karakter non-ASCII berisiko rusak.', 'bulk-catalog-studio' );
+		return __( 'Source is not valid UTF-8 and encoding conversion failed — non-ASCII characters may be corrupted.', 'bulk-catalog-studio' );
 	}
 
 	/**
@@ -287,7 +287,7 @@ class BCS_CSV_Parser {
 				if ( ! preg_match( '/^\d+$/', (string) $key ) ) {
 					$warnings[] = sprintf(
 						/* translators: %s: kunci mapping */
-						__( 'Mapping "%s" diabaikan: tanpa header_row, kunci mapping harus indeks kolom numerik.', 'bulk-catalog-studio' ),
+						__( 'Mapping "%s" ignored: without header_row, mapping keys must be numeric column indexes.', 'bulk-catalog-studio' ),
 						sanitize_text_field( (string) $key )
 					);
 					continue;
@@ -345,13 +345,13 @@ class BCS_CSV_Parser {
 		if ( ! empty( $unmapped ) ) {
 			$warnings[] = sprintf(
 				/* translators: 1: daftar kolom */
-				__( 'Kolom tanpa mapping (diabaikan): %s', 'bulk-catalog-studio' ),
+				__( 'Unmapped columns (ignored): %s', 'bulk-catalog-studio' ),
 				implode( ', ', array_map( 'sanitize_text_field', $unmapped ) )
 			);
 		}
 
 		if ( empty( $map ) ) {
-			$warnings[] = __( 'Tidak ada kolom yang terpetakan — periksa column_mapping.', 'bulk-catalog-studio' );
+			$warnings[] = __( 'No columns were mapped — check column_mapping.', 'bulk-catalog-studio' );
 		}
 
 		return array(
@@ -462,10 +462,10 @@ class BCS_CSV_Parser {
 			return null; // Baris inti kosong — lewati tanpa error.
 		}
 		if ( '' === $row['name'] ) {
-			return new WP_Error( 'bcs_row_invalid', __( 'kolom nama (name) kosong.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_row_invalid', __( 'name column is empty.', 'bulk-catalog-studio' ) );
 		}
 		if ( '' === $row['sku'] ) {
-			return new WP_Error( 'bcs_row_invalid', __( 'kolom SKU kosong — V1 mewajibkan SKU unik per baris.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_row_invalid', __( 'SKU column is empty — V1 requires a unique SKU per row.', 'bulk-catalog-studio' ) );
 		}
 
 		$row['row_key'] = self::row_key( $source_hash, $row_index, $row['sku'] );
@@ -474,8 +474,8 @@ class BCS_CSV_Parser {
 		$row['short_description'] = self::first_value( $values, 'short_description' );
 
 		// Harga.
-		$row['regular_price'] = self::parse_price( self::first_value( $values, 'regular_price' ), $row_index, 'harga', $warnings );
-		$row['sale_price']    = self::parse_price( self::first_value( $values, 'sale_price' ), $row_index, 'harga diskon', $warnings );
+		$row['regular_price'] = self::parse_price( self::first_value( $values, 'regular_price' ), $row_index, 'price', $warnings );
+		$row['sale_price']    = self::parse_price( self::first_value( $values, 'sale_price' ), $row_index, 'sale price', $warnings );
 
 		// Stok: kosong → default 0 + warning (contoh spec §4).
 		// BLOCKER-1 (retur QA-1): simpan juga flag eksplisitas — operasi
@@ -485,7 +485,7 @@ class BCS_CSV_Parser {
 		if ( '' === $stock_raw ) {
 			$warnings[] = sprintf(
 				/* translators: 1: nomor baris */
-				__( 'Baris %1$d: stok kosong → default 0.', 'bulk-catalog-studio' ),
+				__( 'Row %1$d: empty stock → defaulting to 0.', 'bulk-catalog-studio' ),
 				$row_index
 			);
 			$row['stock_quantity'] = 0;
@@ -495,7 +495,7 @@ class BCS_CSV_Parser {
 			if ( null === $stock ) {
 				$warnings[] = sprintf(
 					/* translators: 1: nomor baris, 2: nilai mentah */
-					__( 'Baris %1$d: stok non-numerik "%2$s" → default 0.', 'bulk-catalog-studio' ),
+					__( 'Row %1$d: non-numeric stock "%2$s" → defaulting to 0.', 'bulk-catalog-studio' ),
 					$row_index,
 					$stock_raw
 				);
@@ -587,7 +587,7 @@ class BCS_CSV_Parser {
 			if ( $combo_count !== $cartesian_total && ! empty( $var_skus ) ) {
 				$warnings[] = sprintf(
 					/* translators: 1: nomor baris, 2: jumlah SKU variasi, 3: jumlah kombinasi atribut */
-					__( 'Baris %1$d: jumlah SKU variasi (%2$d) tidak sama dengan jumlah kombinasi atribut (%3$d) — atribut dipetakan berurutan dari kombinasi pertama.', 'bulk-catalog-studio' ),
+					__( 'Row %1$d: variation SKU count (%2$d) does not match the attribute combination count (%3$d) — attributes are mapped in order starting from the first combination.', 'bulk-catalog-studio' ),
 					$row_index,
 					count( $var_skus ),
 					$cartesian_total
@@ -646,7 +646,7 @@ class BCS_CSV_Parser {
 		if ( ! empty( $row['variations'] ) && empty( $row['attributes'] ) ) {
 			$warnings[] = sprintf(
 				/* translators: 1: nomor baris */
-				__( 'Baris %1$d: ada kolom variasi tapi tidak ada kolom attribute:* — variasi diabaikan, produk dibuat simple.', 'bulk-catalog-studio' ),
+				__( 'Row %1$d: variation columns present but no attribute:* columns — variations ignored, product created as simple.', 'bulk-catalog-studio' ),
 				$row_index
 			);
 			$row['variations'] = array();
@@ -663,7 +663,7 @@ class BCS_CSV_Parser {
 				$row['image_url'] = esc_url_raw( $image_url_raw );
 				$warnings[]       = sprintf(
 					/* translators: 1: nomor baris */
-					__( 'Baris %1$d: image_url diabaikan — V1 hanya mendukung attachment_id (keputusan gate1 #4).', 'bulk-catalog-studio' ),
+					__( 'Row %1$d: image_url ignored — V1 only supports attachment_id (gate1 decision #4).', 'bulk-catalog-studio' ),
 					$row_index
 				);
 			}
@@ -777,7 +777,7 @@ class BCS_CSV_Parser {
 		if ( null === $parsed ) {
 			$warnings[] = sprintf(
 				/* translators: 1: nomor baris, 2: label kolom, 3: nilai mentah */
-				__( 'Baris %1$d: %2$s non-numerik "%3$s" — kolom diabaikan.', 'bulk-catalog-studio' ),
+				__( 'Row %1$d: non-numeric %2$s "%3$s" — column ignored.', 'bulk-catalog-studio' ),
 				$row_index,
 				$label,
 				$raw

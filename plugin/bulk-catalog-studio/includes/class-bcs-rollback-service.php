@@ -38,16 +38,16 @@ class BCS_Rollback_Service {
 		}
 
 		if ( true !== $confirm ) {
-			return new WP_Error( 'bcs_confirm_required', __( 'Parameter confirm harus true literal untuk mencegah rollback tak sengaja.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_confirm_required', __( 'The confirm parameter must be literal true to prevent accidental rollback.', 'bulk-catalog-studio' ) );
 		}
 
 		if ( ! in_array( $scope, array( 'all', 'created_only', 'updated_only' ), true ) ) {
-			return new WP_Error( 'bcs_invalid_input', __( 'Scope rollback tidak valid.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_invalid_input', __( 'Invalid rollback scope.', 'bulk-catalog-studio' ) );
 		}
 
 		$job = BCS_Job_Manager::get( $job_id );
 		if ( ! $job ) {
-			return new WP_Error( 'bcs_not_found', __( 'Job tidak ditemukan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Job not found.', 'bulk-catalog-studio' ) );
 		}
 
 		if ( ! in_array( $job['status'], array( 'done', 'partially_failed' ), true ) ) {
@@ -55,7 +55,7 @@ class BCS_Rollback_Service {
 				'bcs_invalid_state',
 				sprintf(
 					/* translators: %s: status job */
-					__( 'Rollback hanya untuk job berstatus done atau partially_failed (status saat ini: %s).', 'bulk-catalog-studio' ),
+					__( 'Rollback only works on jobs with status done or partially_failed (current status: %s).', 'bulk-catalog-studio' ),
 					$job['status']
 				)
 			);
@@ -66,13 +66,13 @@ class BCS_Rollback_Service {
 		$plan_row = $plan_id ? BCS_Plan_Builder::get_plan_row( $plan_id ) : null;
 
 		if ( ! $plan_row ) {
-			return new WP_Error( 'bcs_not_found', __( 'Plan aktif untuk job ini tidak ditemukan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Active plan for this job not found.', 'bulk-catalog-studio' ) );
 		}
 
 		$plan = BCS_Plan_Builder::decode_plan( $plan_row );
 
 		if ( empty( $plan['operations'] ) || ! is_array( $plan['operations'] ) ) {
-			return new WP_Error( 'bcs_invalid_plan', __( 'Plan tidak memiliki operasi.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_invalid_plan', __( 'Plan has no operations.', 'bulk-catalog-studio' ) );
 		}
 
 		$counts = array(
@@ -115,7 +115,7 @@ class BCS_Rollback_Service {
 					$counts['failed']++;
 					$notes[] = sprintf(
 						/* translators: 1: nomor baris, 2: pesan error */
-						__( 'Baris %1$d gagal trash: %2$s', 'bulk-catalog-studio' ),
+						__( 'Row %1$d failed to trash: %2$s', 'bulk-catalog-studio' ),
 						$row_index,
 						$result->get_error_message()
 					);
@@ -133,7 +133,7 @@ class BCS_Rollback_Service {
 					'bcs/rollback-batch', 'trash_product', 'rolled_back', $row_index, $sku, $product_id,
 					sprintf(
 						/* translators: 1: id produk, 2: jumlah variasi */
-						__( 'Produk baru #%1$d dipindah ke trash beserta %2$d variasi.', 'bulk-catalog-studio' ),
+						__( 'New product #%1$d moved to trash along with %2$d variations.', 'bulk-catalog-studio' ),
 						(int) $product_id,
 						(int) ( $result['variations_trashed'] ?? 0 )
 					),
@@ -149,12 +149,12 @@ class BCS_Rollback_Service {
 					$counts['failed']++;
 					$notes[] = sprintf(
 						/* translators: 1: nomor baris */
-						__( 'Baris %1$d: snapshot before tidak tersedia.', 'bulk-catalog-studio' ),
+						__( 'Row %1$d: before snapshot unavailable.', 'bulk-catalog-studio' ),
 						$row_index
 					);
 					BCS_Audit_Logger::log_row(
 						'bcs/rollback-batch', 'restore_snapshot', 'failed', $row_index, $sku, $target,
-						__( 'Snapshot before tidak tersedia.', 'bulk-catalog-studio' ), $row_key, $job_id, $plan_id
+						__( 'Before snapshot unavailable.', 'bulk-catalog-studio' ), $row_key, $job_id, $plan_id
 					);
 					continue;
 				}
@@ -165,7 +165,7 @@ class BCS_Rollback_Service {
 					$counts['failed']++;
 					$notes[] = sprintf(
 						/* translators: 1: nomor baris, 2: pesan error */
-						__( 'Baris %1$d gagal restore: %2$s', 'bulk-catalog-studio' ),
+						__( 'Row %1$d failed to restore: %2$s', 'bulk-catalog-studio' ),
 						$row_index,
 						$restored->get_error_message()
 					);
@@ -180,7 +180,7 @@ class BCS_Rollback_Service {
 
 				BCS_Audit_Logger::log_row(
 					'bcs/rollback-batch', 'restore_snapshot', 'rolled_back', $row_index, $sku, $target,
-					__( 'Produk dikembalikan ke snapshot before.', 'bulk-catalog-studio' ),
+					__( 'Product restored to the before snapshot.', 'bulk-catalog-studio' ),
 					$row_key, $job_id, $plan_id
 				);
 			}
@@ -202,7 +202,7 @@ class BCS_Rollback_Service {
 			'bcs/rollback-batch', 'rollback_batch', 'ok',
 			sprintf(
 				/* translators: 1: trashed, 2: restored, 3: variasi, 4: gagal */
-				__( 'Rollback selesai: trashed %1$d, restored %2$d, variations trashed %3$d, failed %4$d.', 'bulk-catalog-studio' ),
+				__( 'Rollback completed: trashed %1$d, restored %2$d, variations trashed %3$d, failed %4$d.', 'bulk-catalog-studio' ),
 				$counts['products_trashed'],
 				$counts['products_restored'],
 				$counts['variations_trashed'],

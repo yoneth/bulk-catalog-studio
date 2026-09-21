@@ -24,7 +24,7 @@ bcs_require_http_creds || bcs_finish
 jget() { printf '%s' "$1" | jq -r "$2 // empty" 2>/dev/null || true; }
 
 job_id="${BCS_JOB_ID:-$(bcs_state_get '.job_id // ""')}"
-[ -n "$job_id" ] || { bcs_stop "state" "job_id tidak ada — jalankan 02-happy-path.sh dulu"; bcs_finish; }
+[ -n "$job_id" ] || { bcs_stop "state" "job_id is missing — run 02-happy-path.sh first"; bcs_finish; }
 
 prefix="$(bcs_table_prefix)"
 
@@ -33,9 +33,9 @@ res="$(bcs_call_tool "bcs-job-status" '{"job_id":'"$job_id"'}')" || res=""
 st="$(jget "$res" '.jobs[0].status // .status')"
 already_rolled=0
 case "$st" in
-	done|partially_failed) bcs_info "pre-check" "job $job_id status=$st — layak di-rollback" ;;
-	rolled_back)           bcs_info "pre-check" "job $job_id SUDAH rolled_back — hanya verifikasi ulang"; already_rolled=1 ;;
-	*)                     bcs_stop "pre-check" "status job = '$st' — rollback hanya untuk done/partially_failed"; bcs_finish ;;
+	done|partially_failed) bcs_info "pre-check" "job $job_id status=$st — eligible for rollback" ;;
+	rolled_back)           bcs_info "pre-check" "job $job_id is already rolled_back — verification only"; already_rolled=1 ;;
+	*)                     bcs_stop "pre-check" "job status = '$st' — rollback only supports done/partially_failed"; bcs_finish ;;
 esac
 
 # --- 1. Panggil rollback-batch (sekali) --------------------------------------
@@ -45,7 +45,7 @@ if [ "$already_rolled" = "0" ]; then
 		bcs_pass "rollback-batch" "status=rolled_back counts=$(printf '%s' "$res" | jq -c '.counts')"
 		bcs_state_set rollback_counts "$(printf '%s' "$res" | jq -c '.counts')"
 	else
-		bcs_fail "rollback-batch" "gagal: $(printf '%s' "${res:-$BCS_LAST_RESPONSE}" | head -c 300)"
+		bcs_fail "rollback-batch" "failed: $(printf '%s' "${res:-$BCS_LAST_RESPONSE}" | head -c 300)"
 		bcs_finish
 	fi
 fi
@@ -56,44 +56,44 @@ trashed_variations="$(bcs_db_scalar "SELECT COUNT(*) FROM ${prefix}posts v INNER
 live_products="$(bcs_db_scalar "SELECT COUNT(DISTINCT p.ID) FROM ${prefix}posts p INNER JOIN ${prefix}postmeta m ON m.post_id = p.ID WHERE p.post_type='product' AND p.post_status NOT IN ('trash','auto-draft') AND m.meta_key='_bcs_job_id' AND m.meta_value='${job_id}';")"
 
 if [ "${trashed_products:-0}" -ge 27 ] 2>/dev/null; then
-	bcs_pass "trash-products" "produk hasil job di trash = $trashed_products (>= 27; AC-6)"
+	bcs_pass "trash-products" "job products in trash = $trashed_products (>= 27; AC-6)"
 else
-	bcs_fail "trash-products" "produk di trash = ${trashed_products:-?} (harus >= 27)"
+	bcs_fail "trash-products" "products in trash = ${trashed_products:-?} (expected >= 27)"
 fi
 if [ "${trashed_variations:-0}" -ge 60 ] 2>/dev/null; then
-	bcs_pass "trash-variations" "variasi di trash = $trashed_variations (>= 60; AC-6)"
+	bcs_pass "trash-variations" "variations in trash = $trashed_variations (>= 60; AC-6)"
 else
-	bcs_fail "trash-variations" "variasi di trash = ${trashed_variations:-?} (harus >= 60)"
+	bcs_fail "trash-variations" "variations in trash = ${trashed_variations:-?} (expected >= 60)"
 fi
 if [ "${live_products:-0}" = "0" ] 2>/dev/null; then
-	bcs_pass "trash-complete" "0 produk hasil job tersisa di luar trash"
+	bcs_pass "trash-complete" "0 job products remain outside trash"
 else
-	bcs_fail "trash-complete" "masih ada $live_products produk hasil job di luar trash"
+	bcs_fail "trash-complete" "$live_products job products remain outside trash"
 fi
 
 # --- 3. wp post list: trash terlihat dari admin (recoverable, bukan delete) --
 trash_list="$( { bcs_wp post list --post_type=product --post_status=trash --field=ID 2>/dev/null || true; } | wc -l | tr -d '[:space:]')"
 if [ "${trash_list:-0}" -ge 27 ] 2>/dev/null; then
-	bcs_pass "wp-post-trash" "post list trash = $trash_list (produk masih recoverable dari admin)"
+	bcs_pass "wp-post-trash" "trash post list = $trash_list (products remain recoverable in admin)"
 else
-	bcs_fail "wp-post-trash" "post list trash = ${trash_list:-?} (harus >= 27)"
+	bcs_fail "wp-post-trash" "trash post list = ${trash_list:-?} (expected >= 27)"
 fi
 
 # --- 4. Audit berisi rolled_back per baris ------------------------------------
 res="$(bcs_call_tool "bcs-audit-log" '{"job_id":'"$job_id"',"level":"row","limit":200}')" || res=""
 rb_rows="$(printf '%s' "$res" | jq -r '[.entries[]? | select(.status=="rolled_back")] | length' 2>/dev/null || echo 0)"
 if [ "${rb_rows:-0}" -ge 27 ] 2>/dev/null; then
-	bcs_pass "audit-rolled-back" "$rb_rows entri audit berstatus rolled_back (AC-5/AC-6)"
+	bcs_pass "audit-rolled-back" "$rb_rows audit entries have rolled_back status (AC-5/AC-6)"
 else
-	bcs_fail "audit-rolled-back" "entri rolled_back = ${rb_rows:-?} (harus >= 27)"
+	bcs_fail "audit-rolled-back" "rolled_back entries = ${rb_rows:-?} (expected >= 27)"
 fi
 
 # --- 5. Produk non-job tidak terpengaruh (produk seed masih ada) --------------
 seed_pid="$(bcs_wp eval 'echo (string) (int) wc_get_product_id_by_sku( "KML-GRS-003" );' 2>/dev/null | tail -n 1 || true)"
 if [ "${seed_pid:-0}" -gt 0 ] 2>/dev/null; then
-	bcs_pass "non-job-untouched" "produk existing (seed KML-GRS-003, id=$seed_pid) tidak ikut ter-trash"
+	bcs_pass "non-job-untouched" "existing product (seed KML-GRS-003, id=$seed_pid) was not trashed"
 else
-	bcs_fail "non-job-untouched" "produk existing seed hilang — rollback menyentuh produk di luar job!"
+	bcs_fail "non-job-untouched" "seed existing product is missing — rollback touched a product outside the job!"
 fi
 
 bcs_state_set stage "rolled_back"

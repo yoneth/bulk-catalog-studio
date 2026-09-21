@@ -70,27 +70,27 @@ namespace {
 
 	/* G1: init mendaftarkan hook yang benar */
 	BCS_MCP_Server::init();
-	expect( 'G1 init mendaftarkan hook mcp_adapter_init', isset( $GLOBALS['bcs_actions']['mcp_adapter_init'] ) && 1 === count( $GLOBALS['bcs_actions']['mcp_adapter_init'] ) );
-	expect( 'G1 init mendaftarkan hook admin_init dependency check', isset( $GLOBALS['bcs_actions']['admin_init'] ) );
-	expect( 'G1 init mendaftarkan hook admin_notices', isset( $GLOBALS['bcs_actions']['admin_notices'] ) );
+	expect( 'G1 init registers the mcp_adapter_init hook', isset( $GLOBALS['bcs_actions']['mcp_adapter_init'] ) && 1 === count( $GLOBALS['bcs_actions']['mcp_adapter_init'] ) );
+	expect( 'G1 init registers the admin_init dependency check hook', isset( $GLOBALS['bcs_actions']['admin_init'] ) );
+	expect( 'G1 init registers the admin_notices hook', isset( $GLOBALS['bcs_actions']['admin_notices'] ) );
 
 	/* G2-G4: konfigurasi create_server */
 	$adapter = new Fake_Mcp_Adapter();
 	$cb      = $GLOBALS['bcs_actions']['mcp_adapter_init'][0];
 	call_user_func( $cb, $adapter );
 
-	expect( 'G2 create_server dipanggil tepat 1x', 1 === count( $adapter->calls ) );
+	expect( 'G2 create_server is called exactly once', 1 === count( $adapter->calls ) );
 	if ( 1 !== count( $adapter->calls ) ) { exit( 1 ); }
 	$call = $adapter->calls[0];
 
 	expect( 'G2 server id bcs-mcp-server', 'bcs-mcp-server' === $call[0] );
 	expect( 'G2 namespace bcs-mcp', 'bcs-mcp' === $call[1] );
 	expect( 'G2 route mcp', 'mcp' === $call[2] );
-	expect( 'G2 nama Bulk Catalog Studio MCP', 'Bulk Catalog Studio MCP' === $call[3] );
-	expect( 'G2 versi = BCS_VERSION', BCS_VERSION === $call[5] );
+	expect( 'G2 server name is Bulk Catalog Studio MCP', 'Bulk Catalog Studio MCP' === $call[3] );
+	expect( 'G2 version equals BCS_VERSION', BCS_VERSION === $call[5] );
 
 	/* G3: transport + handler persis */
-	expect( 'G3 transport hanya HttpTransport', 1 === count( $call[6] ) && \WP\MCP\Transport\HttpTransport::class === $call[6][0] );
+	expect( 'G3 transport uses only HttpTransport', 1 === count( $call[6] ) && \WP\MCP\Transport\HttpTransport::class === $call[6][0] );
 	expect( 'G3 error handler ErrorLogMcpErrorHandler', \WP\MCP\Infrastructure\ErrorHandling\ErrorLogMcpErrorHandler::class === $call[7] );
 	expect( 'G3 observability NullMcpObservabilityHandler', \WP\MCP\Infrastructure\Observability\NullMcpObservabilityHandler::class === $call[8] );
 
@@ -105,28 +105,28 @@ namespace {
 		'bcs/rollback-batch',
 		'bcs/audit-log',
 	);
-	expect( 'G4 tepat 8 ability diekspos', 8 === count( $call[9] ) );
-	expect( 'G4 daftar ability persis (urutan)', $expected === $call[9] );
-	expect( 'G4 daftar ability sinkron dengan BCS_Schemas', BCS_Schemas::ability_names() === $call[9] );
-	expect( 'G4 resources + prompts kosong', array() === $call[10] && array() === $call[11] );
+	expect( 'G4 exactly 8 abilities are exposed', 8 === count( $call[9] ) );
+	expect( 'G4 ability list matches exactly (including order)', $expected === $call[9] );
+	expect( 'G4 ability list matches BCS_Schemas', BCS_Schemas::ability_names() === $call[9] );
+	expect( 'G4 resources and prompts are empty', array() === $call[10] && array() === $call[11] );
 
 	/* G5: transport permission callback (parameter ke-13) — capability test */
-	expect( 'G5 parameter ke-13 callable', is_callable( $call[12] ) );
+	expect( 'G5 parameter 13 is callable', is_callable( $call[12] ) );
 	$GLOBALS['bcs_user_can'] = true;
-	expect( 'G5 transport permission true bila manage_woocommerce', true === call_user_func( $call[12] ) );
+	expect( 'G5 transport permission is true with manage_woocommerce', true === call_user_func( $call[12] ) );
 	$GLOBALS['bcs_user_can'] = false;
-	expect( 'G5 transport permission false tanpa capability', false === call_user_func( $call[12] ) );
+	expect( 'G5 transport permission is false without the capability', false === call_user_func( $call[12] ) );
 	$GLOBALS['bcs_user_can'] = true;
 
 	/* G5b: endpoint URL kustom */
 	expect( 'G5b endpoint /wp-json/bcs-mcp/mcp', 'https://example.test/wp-json/bcs-mcp/mcp' === BCS_MCP_Server::endpoint_url() );
-	expect( 'G5b rest_namespace + route konsisten', 'bcs-mcp' === BCS_MCP_Server::rest_namespace() && 'mcp' === BCS_MCP_Server::route() );
+	expect( 'G5b REST namespace and route are consistent', 'bcs-mcp' === BCS_MCP_Server::rest_namespace() && 'mcp' === BCS_MCP_Server::route() );
 
 	/* G6: notice tidak tampil bila dependency lengkap (flag false) */
 	ob_start();
 	BCS_MCP_Server::admin_notice_missing_dependency();
 	$out = ob_get_clean();
-	expect( 'G6 tanpa notice bila dependency lengkap', '' === trim( $out ) );
+	expect( 'G6 no notice when dependencies are complete', '' === trim( $out ) );
 
 	/* G7 (statis): header Requires Plugins berisi woocommerce + mcp-adapter */
 	$bootstrap = file_get_contents( dirname( __DIR__ ) . '/plugin/bulk-catalog-studio/bulk-catalog-studio.php' );
@@ -134,13 +134,13 @@ namespace {
 
 	/* G7 (statis): README mengarah ke endpoint kustom */
 	$readme = file_get_contents( dirname( __DIR__ ) . '/plugin/bulk-catalog-studio/README.md' );
-	expect( 'G7 README memuat endpoint /wp-json/bcs-mcp/mcp', false !== strpos( $readme, '/wp-json/bcs-mcp/mcp' ) );
-	expect( 'G7 README menyatakan default tidak dipakai', false !== strpos( $readme, 'TIDAK dipakai' ) );
+	expect( 'G7 README contains the /wp-json/bcs-mcp/mcp endpoint', false !== strpos( $readme, '/wp-json/bcs-mcp/mcp' ) );
+	expect( 'G7 README states that the default endpoint is not used', false !== strpos( $readme, 'is NOT used' ) );
 
 	/* G8: subprocess — dependency hilang → tidak fatal, notice admin. */
 	$missing = shell_exec( 'php ' . escapeshellarg( __DIR__ . '/test-bcs-mcp-missing-deps.php' ) . ' 2>&1' );
-	expect( 'G8 dependency hilang: guard jalan tanpa fatal + notice', is_string( $missing ) && false !== strpos( (string) $missing, 'MISSING-DEPS-OK' ) );
+	expect( 'G8 missing-dependency guard runs without fatal and emits a notice', is_string( $missing ) && false !== strpos( (string) $missing, 'MISSING-DEPS-OK' ) );
 
-	echo $fail > 0 ? "\n$fail TEST GAGAL\n" : "\nSEMUA TEST MCP SERVER PASS\n";
+	echo $fail > 0 ? "\n$fail TESTS FAILED\n" : "\nALL MCP SERVER TESTS PASSED\n";
 	exit( $fail > 0 ? 1 : 0 );
 }

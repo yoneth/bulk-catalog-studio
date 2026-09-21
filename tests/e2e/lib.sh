@@ -99,7 +99,7 @@ bcs_db_scalar() { # $1 = SQL; prints single scalar
 # ---------------------------------------------------------------------------
 bcs_require_http() {
 	if [ "$BCS_TRANSPORT" != "http" ]; then
-		bcs_stop "transport" "custom server bcs-mcp hanya mendukung HTTP — set BCS_TRANSPORT=http (default); stdio hanya helper generik lama"
+		bcs_stop "transport" "custom bcs-mcp server supports HTTP only — set BCS_TRANSPORT=http (default); stdio is only a legacy generic helper"
 		return 1
 	fi
 	bcs_pass "transport" "transport=http → $BCS_MCP_ENDPOINT"
@@ -107,16 +107,16 @@ bcs_require_http() {
 
 bcs_require_http_creds() {
 	if [ -z "${BCS_WP_USER:-}" ] || [ -z "${BCS_APP_PASSWORD:-}" ]; then
-		bcs_stop "http-creds" "env BCS_WP_USER dan BCS_APP_PASSWORD (Application Password) WAJIB di-set — kredensial tidak pernah di-hardcode"
+		bcs_stop "http-creds" "BCS_WP_USER and BCS_APP_PASSWORD (Application Password) must be set — credentials are never hardcoded"
 		return 1
 	fi
-	bcs_pass "http-creds" "kredensial ter-set untuk user '${BCS_WP_USER}'"
+	bcs_pass "http-creds" "credentials are set for user '${BCS_WP_USER}'"
 }
 
 # Langkah 1: initialize → simpan body ke BCS_INIT_BODY, cetak Mcp-Session-Id.
 bcs_http_session() {
-	: "${BCS_WP_USER:?Env BCS_WP_USER wajib di-set untuk transport http}"
-	: "${BCS_APP_PASSWORD:?Env BCS_APP_PASSWORD (Application Password) wajib di-set untuk transport http}"
+	: "${BCS_WP_USER:?BCS_WP_USER must be set for HTTP transport}"
+	: "${BCS_APP_PASSWORD:?BCS_APP_PASSWORD (Application Password) must be set for HTTP transport}"
 	local tmpdir session
 	tmpdir="$(mktemp -d)"
 	if ! curl -sS --max-time 30 -D "$tmpdir/h" -o "$tmpdir/b" -X POST "$BCS_MCP_ENDPOINT" \
@@ -262,19 +262,19 @@ bcs_require_tools() {
 	command -v jq >/dev/null 2>&1 || missing="$missing jq"
 	command -v curl >/dev/null 2>&1 || missing="$missing curl"
 	if [ -n "$missing" ]; then
-		bcs_fail "tools-present" "binary tidak ditemukan:$missing"
+		bcs_fail "tools-present" "binaries not found:$missing"
 		return 1
 	fi
-	bcs_pass "tools-present" "jq+curl tersedia"
+	bcs_pass "tools-present" "jq+curl are available"
 }
 
 bcs_require_wp() {
 	if [ ! -x "$BCS_WP_BIN" ]; then
-		bcs_fail "wp-binary" "$BCS_WP_BIN tidak executable"
+		bcs_fail "wp-binary" "$BCS_WP_BIN is not executable"
 		return 1
 	fi
 	if ! bcs_wp core version >/dev/null 2>&1; then
-		bcs_fail "wp-reachable" "wp core version gagal di $BCS_WP_ROOT"
+		bcs_fail "wp-reachable" "wp core version failed at $BCS_WP_ROOT"
 		return 1
 	fi
 	bcs_pass "wp-reachable" "$(bcs_wp core version 2>/dev/null | tail -n 1)"

@@ -32,7 +32,7 @@ class BCS_Duplicate_Checker {
 
 		$job = BCS_Job_Manager::get( $job_id );
 		if ( ! $job ) {
-			return new WP_Error( 'bcs_not_found', __( 'Job tidak ditemukan.', 'bulk-catalog-studio' ) );
+			return new WP_Error( 'bcs_not_found', __( 'Job not found.', 'bulk-catalog-studio' ) );
 		}
 
 		if ( 'parsed' !== $job['status'] ) {
@@ -40,7 +40,7 @@ class BCS_Duplicate_Checker {
 				'bcs_invalid_state',
 				sprintf(
 					/* translators: %s: status job */
-					__( 'check-duplicates hanya boleh pada job berstatus parsed (status saat ini: %s).', 'bulk-catalog-studio' ),
+					__( 'check-duplicates only works on jobs with status parsed (current status: %s).', 'bulk-catalog-studio' ),
 					$job['status']
 				)
 			);
