@@ -50,11 +50,12 @@ class BCS_Sync_Runner {
 	/**
 	 * Run one connection. A stale applying run is resumed idempotently.
 	 *
-	 * @param int    $connection_id Connection ID.
-	 * @param string $trigger       manual|cron|webhook|mcp.
+	 * @param int         $connection_id Connection ID.
+	 * @param string      $trigger       manual|cron|webhook|mcp.
+	 * @param string|null $actor_override Optional audit actor (for example mcp).
 	 * @return array|WP_Error
 	 */
-	public static function run( $connection_id, $trigger = 'manual' ) {
+	public static function run( $connection_id, $trigger = 'manual', $actor_override = null ) {
 		global $wpdb;
 
 		$connection_id = absint( $connection_id );
@@ -65,7 +66,10 @@ class BCS_Sync_Runner {
 		$lock_name = 'bcs_sync_' . $connection_id;
 		$locked   = false;
 		$run_id   = 0;
-		$actor    = self::actor_for_trigger( $trigger );
+		$actor    = null !== $actor_override ? sanitize_key( $actor_override ) : self::actor_for_trigger( $trigger );
+		if ( ! in_array( $actor, array( 'sync', 'cron', 'mcp', 'wp_admin' ), true ) ) {
+			$actor = self::actor_for_trigger( $trigger );
+		}
 
 		try {
 			$lock_result = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, 0)', $lock_name ) );
@@ -88,7 +92,7 @@ class BCS_Sync_Runner {
 			$latest = self::latest_run( $connection_id );
 			if ( $latest && 'applying' === $latest['state'] ) {
 				if ( ! self::is_stale( $latest ) ) {
-					return new WP_Error( 'run_in_progress', __( 'The connection already has a fresh applying run.', 'bulk-catalog-studio' ) );
+					return new WP_Error( 'lock_busy', __( 'Another sync run is already active for this connection.', 'bulk-catalog-studio' ) );
 				}
 				$run_id = (int) $latest['id'];
 				return self::resume_apply( $run_id, $connection, $actor );
@@ -102,8 +106,8 @@ class BCS_Sync_Runner {
 				}
 				return self::apply_run( $run_id, $connection, $diff, $actor );
 			}
-			if ( $latest && in_array( $latest['state'], array( 'pending', 'fetching', 'diffing' ), true ) ) {
-				return new WP_Error( 'run_in_progress', __( 'The connection already has a run in progress.', 'bulk-catalog-studio' ) );
+			if ( $latest && in_array( $latest['state'], array( 'running', 'pending', 'fetching', 'diffing' ), true ) ) {
+				return new WP_Error( 'lock_busy', __( 'Another sync run is already active for this connection.', 'bulk-catalog-studio' ) );
 			}
 			if ( $latest && 'awaiting_approval' === $latest['state'] ) {
 				self::transition( (int) $latest['id'], 'awaiting_approval', 'superseded', array( 'finished_at' => self::now_mysql(), 'error_code' => 'superseded' ) );
@@ -117,28 +121,28 @@ class BCS_Sync_Runner {
 
 			$transition = self::transition( $run_id, 'pending', 'fetching' );
 			if ( is_wp_error( $transition ) ) {
-				return self::fail_run( $run_id, 'failed_fetch', $transition->get_error_code(), $transition->get_error_message() );
+				return self::fail_run( $run_id, 'failed_fetch', $transition->get_error_code(), $transition->get_error_message(), $actor );
 			}
 
 			$fetcher = BCS_Sync_Fetcher_Factory::make( $connection['fetcher'] );
 			if ( is_wp_error( $fetcher ) ) {
-				return self::fail_run( $run_id, 'failed_fetch', $fetcher->get_error_code(), $fetcher->get_error_message() );
+				return self::fail_run( $run_id, 'failed_fetch', $fetcher->get_error_code(), $fetcher->get_error_message(), $actor );
 			}
 			$fetched = $fetcher->fetch( $connection );
 			if ( is_wp_error( $fetched ) ) {
-				return self::fail_run( $run_id, 'failed_fetch', $fetched->get_error_code(), $fetched->get_error_message() );
+				return self::fail_run( $run_id, 'failed_fetch', $fetched->get_error_code(), $fetched->get_error_message(), $actor );
 			}
 			self::update_run( $run_id, array( 'fetched_rows' => count( (array) $fetched['rows'] ), 'heartbeat_at' => self::now_mysql() ) );
 
 			$transition = self::transition( $run_id, 'fetching', 'diffing' );
 			if ( is_wp_error( $transition ) ) {
-				return self::fail_run( $run_id, 'failed_guard', $transition->get_error_code(), $transition->get_error_message() );
+				return self::fail_run( $run_id, 'failed_guard', $transition->get_error_code(), $transition->get_error_message(), $actor );
 			}
 
 			$diff = BCS_Sync_Diff::diff( (array) $fetched['rows'], $connection );
 			if ( is_wp_error( $diff ) ) {
 				$failed_state = in_array( $diff->get_error_code(), array( 'fetch_zero_rows', 'schema_mismatch', 'fetch_not_csv', 'schema_drift' ), true ) ? 'failed_fetch' : 'failed_guard';
-				return self::fail_run( $run_id, $failed_state, $diff->get_error_code(), $diff->get_error_message() );
+				return self::fail_run( $run_id, $failed_state, $diff->get_error_code(), $diff->get_error_message(), $actor );
 			}
 			self::persist_diff( $run_id, $diff );
 
@@ -162,7 +166,7 @@ class BCS_Sync_Runner {
 			return self::apply_run( $run_id, $connection, $diff, $actor );
 		} catch ( Throwable $exception ) {
 			if ( $run_id ) {
-				return self::fail_run( $run_id, 'failed_guard', 'runner_exception', $exception->getMessage() );
+				return self::fail_run( $run_id, 'failed_guard', 'runner_exception', $exception->getMessage(), $actor );
 			}
 			return new WP_Error( 'runner_exception', $exception->getMessage() );
 		} finally {
@@ -215,41 +219,223 @@ class BCS_Sync_Runner {
 	}
 
 	/**
-	 * Approve a threshold-held run after an external one-time approval gate.
-	 * The caller must validate the token before invoking this service; the
-	 * diff_hash guard keeps an approval bound to the exact persisted diff.
+	 * Approve a threshold-held run after validating its one-time token.
+	 * The diff_hash and token checks keep an approval bound to the exact
+	 * persisted diff and a single approval event.
 	 *
-	 * @param int    $run_id    Run ID.
-	 * @param string $diff_hash Expected diff hash.
+	 * @param int         $run_id    Run ID.
+	 * @param string      $diff_hash Expected diff hash.
+	 * @param string|null $token     Plaintext approval token.
+	 * @param int|null    $user_id   Approving user ID.
 	 * @return array|WP_Error
 	 */
-	public static function approve_run( $run_id, $diff_hash ) {
+	public static function approve_run( $run_id, $diff_hash, $token = null, $user_id = null ) {
 		$run = self::get_run( $run_id );
 		if ( ! $run ) {
 			return new WP_Error( 'bcs_not_found', __( 'Sync run not found.', 'bulk-catalog-studio' ) );
 		}
-		if ( 'awaiting_approval' !== $run['state'] ) {
-			return new WP_Error( 'invalid_state', __( 'Only an awaiting_approval sync run can be approved.', 'bulk-catalog-studio' ) );
-		}
 		if ( ! hash_equals( (string) $run['diff_hash'], (string) $diff_hash ) ) {
 			return new WP_Error( 'diff_hash_mismatch', __( 'The approval diff_hash does not match the stored sync diff.', 'bulk-catalog-studio' ) );
 		}
+
+		$user_id = null === $user_id ? get_current_user_id() : absint( $user_id );
+		$verify = self::verify_run_token( $run_id, $diff_hash, (string) $token );
+		if ( is_wp_error( $verify ) ) {
+			return $verify;
+		}
+
+		if ( 'awaiting_approval' !== $run['state'] ) {
+			return new WP_Error( 'invalid_state', __( 'Only an awaiting_approval sync run can be approved.', 'bulk-catalog-studio' ) );
+		}
+
+		// MAJOR-2: win the state transition before consuming the token. Keep both
+		// writes in one transaction so a post-transition DB failure cannot leave
+		// an approved run with an unconsumed token.
+		global $wpdb;
+		$transaction = false;
+		if ( isset( $wpdb ) && is_object( $wpdb ) && method_exists( $wpdb, 'query' ) ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Transaction control for the custom-table approval mutation.
+			$transaction = false !== $wpdb->query( 'START TRANSACTION' );
+		}
 		$transition = self::transition( $run_id, 'awaiting_approval', 'approved', array( 'error_code' => null, 'heartbeat_at' => self::now_mysql() ) );
 		if ( is_wp_error( $transition ) ) {
+			if ( $transaction ) {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Roll back the approval transaction.
+				$wpdb->query( 'ROLLBACK' );
+			}
 			return $transition;
+		}
+		$consume = self::consume_run_token( $run_id, $user_id );
+		if ( is_wp_error( $consume ) ) {
+			if ( $transaction ) {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Roll back the approval transaction.
+				$wpdb->query( 'ROLLBACK' );
+			}
+			return $consume;
+		}
+		if ( $transaction ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Commit the approval transaction.
+			$committed = $wpdb->query( 'COMMIT' );
+			if ( false === $committed ) {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Roll back when commit fails.
+				$wpdb->query( 'ROLLBACK' );
+				return new WP_Error( 'bcs_db_error', __( 'The sync approval transaction could not be committed.', 'bulk-catalog-studio' ) );
+			}
 		}
 		return self::get_run( $run_id );
 	}
 
 	/**
-	 * Alias for approval callers.
+	 * Generate a plaintext run approval token once.
+	 *
+	 * @param int $run_id Run ID.
+	 * @return string|WP_Error Plaintext token, never persisted in plaintext.
+	 */
+	public static function generate_run_token( $run_id ) {
+		global $wpdb;
+
+		$run = self::get_run( $run_id );
+		if ( ! $run ) {
+			return new WP_Error( 'bcs_not_found', __( 'Sync run not found.', 'bulk-catalog-studio' ) );
+		}
+		if ( 'awaiting_approval' !== $run['state'] ) {
+			return new WP_Error( 'invalid_state', __( 'Approval tokens can only be generated for an awaiting_approval sync run.', 'bulk-catalog-studio' ) );
+		}
+		if ( '' === (string) $run['diff_hash'] ) {
+			return new WP_Error( 'bcs_hash_missing', __( 'The sync run has no persisted diff_hash to bind the approval token to.', 'bulk-catalog-studio' ) );
+		}
+		if ( ! function_exists( 'wp_hash_password' ) ) {
+			return new WP_Error( 'bcs_token_unavailable', __( 'WordPress password hashing is unavailable for sync approval tokens.', 'bulk-catalog-studio' ) );
+		}
+
+		$charset = self::run_token_charset();
+		$suffix  = '';
+		for ( $i = 0; $i < 8; $i++ ) {
+			$suffix .= $charset[ wp_rand( 0, strlen( $charset ) - 1 ) ];
+		}
+		$token   = 'BCS-' . $suffix;
+		$now     = self::now_mysql();
+		$expires = gmdate( 'Y-m-d H:i:s', strtotime( $now . ' UTC' ) + ( 24 * HOUR_IN_SECONDS ) );
+		$table   = $wpdb->prefix . 'bcs_sync_runs';
+
+		// Generate replaces a previous unused token; only the hash is stored.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- custom table; wpdb prepares values.
+		$updated = $wpdb->update(
+			$table,
+			array(
+				'token_hash'       => wp_hash_password( $token ),
+				'token_expires_at' => $expires,
+				'token_used_at'    => null,
+				'approved_by'      => null,
+				'approved_at'      => null,
+			),
+			array( 'id' => absint( $run_id ), 'state' => 'awaiting_approval' ),
+			array( '%s', '%s', '%s', '%s', '%s' ),
+			array( '%d', '%s' )
+		);
+		if ( 1 !== (int) $updated ) {
+			return new WP_Error( 'bcs_db_error', __( 'Failed to store the sync approval token for this awaiting run.', 'bulk-catalog-studio' ) );
+		}
+
+		return $token;
+	}
+
+	/**
+	 * Verify a run token against the stored diff hash and 24-hour expiry.
 	 *
 	 * @param int    $run_id Run ID.
 	 * @param string $diff_hash Expected diff hash.
+	 * @param string $token Plaintext token.
+	 * @return true|WP_Error
+	 */
+	public static function verify_run_token( $run_id, $diff_hash, $token ) {
+		$run = self::get_run( $run_id );
+		if ( ! $run ) {
+			return new WP_Error( 'bcs_not_found', __( 'Sync run not found.', 'bulk-catalog-studio' ) );
+		}
+		if ( ! hash_equals( (string) $run['diff_hash'], (string) $diff_hash ) ) {
+			return new WP_Error( 'diff_hash_mismatch', __( 'The approval diff_hash does not match the stored sync diff.', 'bulk-catalog-studio' ) );
+		}
+		if ( empty( $run['token_hash'] ) ) {
+			return new WP_Error( 'bcs_token_missing', __( 'No approval token exists for this sync run yet. Generate one on the admin Sync screen.', 'bulk-catalog-studio' ) );
+		}
+		if ( ! empty( $run['token_used_at'] ) ) {
+			return new WP_Error( 'bcs_token_used', __( 'The sync approval token has already been used. Generate a new token on the admin Sync screen.', 'bulk-catalog-studio' ) );
+		}
+		if ( ! empty( $run['token_expires_at'] ) && strtotime( (string) $run['token_expires_at'] . ' UTC' ) < time() ) {
+			return new WP_Error( 'bcs_token_expired', __( 'The sync approval token has expired after 24 hours. Generate a new token.', 'bulk-catalog-studio' ) );
+		}
+
+		$token = strtoupper( trim( (string) $token ) );
+		if ( ! preg_match( '/^[A-Z0-9-]{6,12}$/', $token ) ) {
+			return new WP_Error( 'bcs_token_invalid', __( 'Invalid sync token format (must be 6–12 characters A-Z0-9-).', 'bulk-catalog-studio' ) );
+		}
+		if ( ! function_exists( 'wp_check_password' ) || ! wp_check_password( $token, (string) $run['token_hash'], 0 ) ) {
+			return new WP_Error( 'bcs_token_invalid', __( 'Wrong sync approval token.', 'bulk-catalog-studio' ) );
+		}
+
+		return true;
+	}
+
+	/**
+	 * Atomically consume a run token after the run has transitioned.
+	 *
+	 * @param int $run_id Run ID.
+	 * @param int $user_id Approving user.
+	 * @return true|WP_Error
+	 */
+	public static function consume_run_token( $run_id, $user_id ) {
+		global $wpdb;
+
+		$run = self::get_run( $run_id );
+		if ( ! $run ) {
+			return new WP_Error( 'bcs_not_found', __( 'Sync run not found.', 'bulk-catalog-studio' ) );
+		}
+		if ( ! empty( $run['token_used_at'] ) ) {
+			return new WP_Error( 'bcs_token_used', __( 'The sync approval token has already been used.', 'bulk-catalog-studio' ) );
+		}
+
+		$now   = self::now_mysql();
+		$table = $wpdb->prefix . 'bcs_sync_runs';
+		// The WHERE token_used_at IS NULL clause is the single-use gate.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- custom table name is derived from the WP prefix; all values are prepared.
+		$affected = $wpdb->query(
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name is derived from the WP prefix; values use placeholders.
+			$wpdb->prepare(
+				"UPDATE {$table} SET token_used_at = %s, approved_by = %d, approved_at = %s WHERE id = %d AND token_used_at IS NULL", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name is derived from the WP prefix; values use placeholders.
+				$now,
+				absint( $user_id ),
+				$now,
+				absint( $run_id )
+			)
+		);
+		if ( 1 !== (int) $affected ) {
+			return new WP_Error( 'bcs_token_used', __( 'The sync approval token was already consumed by another process (atomic single-use).', 'bulk-catalog-studio' ) );
+		}
+
+		return true;
+	}
+
+	/**
+	 * Charset shared with BCS_Approval_Token without changing that class.
+	 *
+	 * @return string
+	 */
+	private static function run_token_charset() {
+		return 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+	}
+
+	/**
+	 * Alias for approval callers.
+	 *
+	 * @param int         $run_id    Run ID.
+	 * @param string      $diff_hash Expected diff hash.
+	 * @param string|null $token     Plaintext approval token.
+	 * @param int|null    $user_id   Approving user ID.
 	 * @return array|WP_Error
 	 */
-	public static function approve( $run_id, $diff_hash ) {
-		return self::approve_run( $run_id, $diff_hash );
+	public static function approve( $run_id, $diff_hash, $token = null, $user_id = null ) {
+		return self::approve_run( $run_id, $diff_hash, $token, $user_id );
 	}
 
 	/**
@@ -281,6 +467,92 @@ class BCS_Sync_Runner {
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- custom table; id prepared.
 		$row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE connection_id = %d ORDER BY id DESC LIMIT 1", absint( $connection_id ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table from prefix.
 		return $row ? self::normalize_run( $row ) : null;
+	}
+
+	/**
+	 * List sync runs for the admin screen.
+	 *
+	 * @param int $connection_id Optional connection filter.
+	 * @param int $limit Maximum rows.
+	 * @return array
+	 */
+	public static function list_runs( $connection_id = 0, $limit = 100 ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'bcs_sync_runs';
+		$limit = max( 1, min( 500, absint( $limit ) ) );
+		if ( absint( $connection_id ) > 0 ) {
+			$sql = $wpdb->prepare( "SELECT * FROM {$table} WHERE connection_id = %d ORDER BY id DESC LIMIT %d", absint( $connection_id ), $limit ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table from prefix.
+		} else {
+			$sql = $wpdb->prepare( "SELECT * FROM {$table} ORDER BY id DESC LIMIT %d", $limit ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table from prefix.
+		}
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared -- custom table and prepared filter/limit SQL.
+		$rows = $wpdb->get_results( $sql );
+		$out  = array();
+		foreach ( (array) $rows as $row ) {
+			$out[] = self::normalize_run( $row );
+		}
+		return $out;
+	}
+
+	/**
+	 * Return unresolved quarantine entries, enriched with their source run.
+	 *
+	 * @param int $connection_id Optional connection filter.
+	 * @param int $limit Maximum entries.
+	 * @return array
+	 */
+	public static function list_quarantine( $connection_id = 0, $limit = 200 ) {
+		$items = array();
+		$limit = max( 1, min( 10000, absint( $limit ) ) );
+		foreach ( self::list_runs( $connection_id, 500 ) as $run ) {
+			$diff = self::decode_diff( $run['diff_summary'] );
+			foreach ( (array) ( isset( $diff['quarantine'] ) ? $diff['quarantine'] : array() ) as $item ) {
+				if ( ! is_array( $item ) || ! empty( $item['resolved'] ) ) {
+					continue;
+				}
+				$item['run_id']        = (int) $run['id'];
+				$item['connection_id'] = (int) $run['connection_id'];
+				$item['run_state']     = (string) $run['state'];
+				$item['diff_hash']     = (string) $run['diff_hash'];
+				$items[]               = $item;
+				if ( count( $items ) >= absint( $limit ) ) {
+					return $items;
+				}
+			}
+		}
+		return $items;
+	}
+
+	/**
+	 * Count conflict and quarantine notices for the connection list ability.
+	 *
+	 * @return array
+	 */
+	public static function pending_counts() {
+		$conflicts = 0;
+		if ( function_exists( 'get_posts' ) ) {
+			$posts = get_posts(
+				array(
+					'post_type'      => array( 'product', 'product_variation' ),
+					'post_status'    => 'any',
+					'posts_per_page' => 500,
+					'fields'         => 'ids',
+					'no_found_rows'  => true,
+					'meta_query'     => array(
+						array(
+							'key'     => '_bcs_conflict_flag',
+							'value'   => '',
+							'compare' => '!=',
+						),
+					),
+				)
+			);
+			$conflicts = count( (array) $posts );
+		}
+		return array(
+			'conflicts_pending'  => $conflicts,
+			'quarantine_pending' => count( self::list_quarantine( 0, 10000 ) ),
+		);
 	}
 
 	/**
@@ -362,6 +634,297 @@ class BCS_Sync_Runner {
 	}
 
 	/**
+	 * Resolve one quarantined item from the admin quarantine screen.
+	 *
+	 * @param int $run_id Run ID.
+	 * @param string $sku Parent or variation SKU.
+	 * @param string $action apply or discard.
+	 * @param string $actor_via Audit actor context.
+	 * @return array|WP_Error
+	 */
+	public static function resolve_quarantine( $run_id, $sku, $action, $actor_via = 'wp_admin' ) {
+		$action = sanitize_key( $action );
+		if ( ! in_array( $action, array( 'apply', 'discard' ), true ) ) {
+			return new WP_Error( 'invalid_action', __( 'Quarantine action must be apply or discard.', 'bulk-catalog-studio' ) );
+		}
+
+		$run = self::get_run( $run_id );
+		if ( ! $run ) {
+			return new WP_Error( 'bcs_not_found', __( 'Sync run not found.', 'bulk-catalog-studio' ) );
+		}
+		$diff = self::decode_diff( $run['diff_summary'] );
+		$items = isset( $diff['quarantine'] ) && is_array( $diff['quarantine'] ) ? $diff['quarantine'] : array();
+		$wanted = strtolower( trim( (string) $sku ) );
+		$found_index = -1;
+		foreach ( $items as $index => $item ) {
+			if ( ! is_array( $item ) || ! empty( $item['resolved'] ) ) {
+				continue;
+			}
+			$item_sku = strtolower( trim( (string) ( isset( $item['sku'] ) ? $item['sku'] : '' ) ) );
+			$variation_sku = strtolower( trim( (string) ( isset( $item['variation_sku'] ) ? $item['variation_sku'] : '' ) ) );
+			if ( $wanted === $item_sku || ( '' !== $variation_sku && $wanted === $variation_sku ) ) {
+				$found_index = $index;
+				break;
+			}
+		}
+		if ( $found_index < 0 ) {
+			return new WP_Error( 'quarantine_not_found', __( 'The unresolved quarantine item was not found for this run and SKU.', 'bulk-catalog-studio' ) );
+		}
+
+		$item = $items[ $found_index ];
+		$product_id = 0;
+		if ( 'apply' === $action ) {
+			$applied = self::apply_quarantine_item( $run, $item, $actor_via );
+			if ( is_wp_error( $applied ) ) {
+				return $applied;
+			}
+			$product_id = isset( $applied['product_id'] ) ? (int) $applied['product_id'] : 0;
+		}
+
+		$items[ $found_index ]['resolved']       = true;
+		$items[ $found_index ]['resolution']     = $action;
+		$items[ $found_index ]['resolved_at']    = self::now_mysql();
+		$items[ $found_index ]['resolved_by']    = get_current_user_id();
+		$diff['quarantine']                      = array_values( $items );
+		$updated = self::update_run( $run_id, array( 'diff_summary' => self::json( $diff ) ) );
+		if ( is_wp_error( $updated ) ) {
+			return $updated;
+		}
+
+		BCS_Audit_Logger::log_row(
+			'bcs/sync-quarantine',
+			'quarantine_' . $action,
+			'ok',
+			0,
+			isset( $item['sku'] ) ? $item['sku'] : $sku,
+			$product_id ? $product_id : ( isset( $item['before']['id'] ) ? absint( $item['before']['id'] ) : null ),
+			'Quarantine item resolved manually.',
+			self::quarantine_operation_key( $run_id, $item ),
+			$run_id,
+			0,
+			'sync',
+			$actor_via
+		);
+
+		return array(
+			'run_id'      => (int) $run_id,
+			'sku'         => isset( $item['sku'] ) ? (string) $item['sku'] : (string) $sku,
+			'action'      => $action,
+			'resolved'    => true,
+			'product_id'  => $product_id,
+		);
+	}
+
+	/**
+	 * Apply one quarantine payload through the catalog writer.
+	 *
+	 * @param array  $run Run.
+	 * @param array  $item Quarantine item.
+	 * @param string $actor_via Audit actor.
+	 * @return array|WP_Error
+	 */
+	private static function apply_quarantine_item( array $run, array $item, $actor_via ) {
+		$connection = BCS_Sync_Connection::get( (int) $run['connection_id'] );
+		if ( is_wp_error( $connection ) || ! is_array( $connection ) ) {
+			return is_wp_error( $connection ) ? $connection : new WP_Error( 'bcs_not_found', __( 'Sync connection not found for quarantine item.', 'bulk-catalog-studio' ) );
+		}
+		$payload = isset( $item['payload'] ) && is_array( $item['payload'] ) ? $item['payload'] : array();
+		$before  = isset( $item['before'] ) && is_array( $item['before'] ) ? $item['before'] : array();
+		$sku     = isset( $item['sku'] ) ? (string) $item['sku'] : '';
+		$key     = self::quarantine_operation_key( $run['id'], $item );
+		$target  = isset( $before['id'] ) ? absint( $before['id'] ) : 0;
+		$hash    = class_exists( 'BCS_Sync_Diff' ) ? BCS_Sync_Diff::payload_hash( $payload ) : sha1( self::json( $payload ) );
+
+		if ( ! empty( $item['variation_sku'] ) ) {
+			$parent_id = isset( $before['parent_id'] ) ? absint( $before['parent_id'] ) : 0;
+			if ( ! $parent_id && class_exists( 'BCS_Duplicate_Checker' ) ) {
+				$parent_id = (int) BCS_Duplicate_Checker::find_by_sku( $sku );
+			}
+			if ( ! $parent_id ) {
+				return new WP_Error( 'variation_parent_not_found', __( 'The parent product for this quarantined variation was not found.', 'bulk-catalog-studio' ) );
+			}
+			$result = BCS_Catalog_Writer::update_variation(
+				$parent_id,
+				(string) $item['variation_sku'],
+				$payload,
+				array( 'sync_hash' => $hash, 'connection_id' => $connection['id'] )
+			);
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+			return array( 'product_id' => isset( $result['variation_id'] ) ? (int) $result['variation_id'] : $parent_id );
+		}
+
+		if ( 'sync_action' === (string) ( isset( $item['reason'] ) ? $item['reason'] : '' ) || 'delete' === (string) ( isset( $payload['sync_action'] ) ? $payload['sync_action'] : '' ) ) {
+			if ( ! $target && class_exists( 'BCS_Duplicate_Checker' ) ) {
+				$target = (int) BCS_Duplicate_Checker::find_by_sku( $sku );
+			}
+			if ( ! $target ) {
+				return new WP_Error( 'bcs_not_found', __( 'Product not found for quarantined delete.', 'bulk-catalog-studio' ) );
+			}
+			$result = BCS_Catalog_Writer::trash_product( $target );
+			return is_wp_error( $result ) ? $result : array( 'product_id' => $target );
+		}
+
+		$operation = array(
+			'op'                => $target ? 'update_product' : 'create_product',
+			'product_type'      => ! empty( $payload['variations'] ) || ! empty( $payload['attributes'] ) ? 'variable' : 'simple',
+			'row_key'           => $key,
+			'target_product_id' => $target,
+			'payload'           => $payload,
+		);
+		$result = BCS_Catalog_Writer::execute_operation( $operation, $run['id'], 0 );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		$product_id = isset( $result['product_id'] ) ? (int) $result['product_id'] : $target;
+		$sync_state = BCS_Catalog_Writer::set_sync_state( $product_id, $hash, $connection['id'] );
+		if ( is_wp_error( $sync_state ) ) {
+			return $sync_state;
+		}
+		return array( 'product_id' => $product_id );
+	}
+
+	/**
+	 * Resolve a product conflict without silently overwriting catalog data.
+	 *
+	 * @param int    $product_id Product/variation ID.
+	 * @param string $resolution sheet_wins or keep_wp.
+	 * @param string $actor_via Audit actor.
+	 * @return array|WP_Error
+	 */
+	public static function resolve_conflict( $product_id, $resolution, $actor_via = 'wp_admin' ) {
+		$resolution = sanitize_key( $resolution );
+		if ( ! in_array( $resolution, array( 'sheet_wins', 'keep_wp' ), true ) ) {
+			return new WP_Error( 'invalid_resolution', __( 'Conflict resolution must be sheet_wins or keep_wp.', 'bulk-catalog-studio' ) );
+		}
+		if ( ! function_exists( 'wc_get_product' ) ) {
+			return new WP_Error( 'bcs_missing_woocommerce', __( 'WooCommerce is required to resolve a sync conflict.', 'bulk-catalog-studio' ) );
+		}
+		$product = wc_get_product( absint( $product_id ) );
+		if ( ! $product instanceof WC_Product ) {
+			return new WP_Error( 'bcs_not_found', __( 'Product not found for conflict resolution.', 'bulk-catalog-studio' ) );
+		}
+
+		$sku           = method_exists( $product, 'get_sku' ) ? (string) $product->get_sku( 'edit' ) : '';
+		$connection_id = method_exists( $product, 'get_meta' ) ? absint( $product->get_meta( '_bcs_connection_id', true, 'edit' ) ) : 0;
+		$payload       = self::current_product_payload( $product );
+		$hash          = BCS_Sync_Diff::payload_hash( $payload );
+
+		if ( 'sheet_wins' === $resolution ) {
+			$operation = self::find_conflict_operation( $product_id, $sku, $connection_id );
+			if ( ! is_array( $operation ) || ! isset( $operation['payload'] ) || ! is_array( $operation['payload'] ) ) {
+				return new WP_Error( 'conflict_source_missing', __( 'The source payload for this conflict is no longer available. Keep the WP version or run the connection again.', 'bulk-catalog-studio' ) );
+			}
+			$payload = $operation['payload'];
+			$hash    = ! empty( $operation['sync_hash'] ) && preg_match( '/^[a-f0-9]{40}$/i', (string) $operation['sync_hash'] ) ? (string) $operation['sync_hash'] : BCS_Sync_Diff::payload_hash( $payload );
+
+			if ( $product instanceof WC_Product_Variation ) {
+				$parent_id = method_exists( $product, 'get_parent_id' ) ? absint( $product->get_parent_id() ) : 0;
+				$variation_sku = ! empty( $operation['variation_sku'] ) ? (string) $operation['variation_sku'] : $sku;
+				if ( ! $parent_id || '' === $variation_sku ) {
+					return new WP_Error( 'conflict_target_invalid', __( 'The variation parent or SKU could not be resolved for Sheet wins.', 'bulk-catalog-studio' ) );
+				}
+				$result = BCS_Catalog_Writer::update_variation(
+					$parent_id,
+					$variation_sku,
+					$payload,
+					array( 'sync_hash' => $hash, 'connection_id' => $connection_id )
+				);
+			} else {
+				$result = BCS_Catalog_Writer::execute_operation(
+					array(
+						'op'                => 'update_product',
+						'target_product_id' => absint( $product_id ),
+						'payload'           => $payload,
+					),
+					0,
+					0
+				);
+				if ( ! is_wp_error( $result ) ) {
+					$result = BCS_Catalog_Writer::set_sync_state( $product_id, $hash, $connection_id );
+				}
+			}
+		} else {
+			// Keep WP acknowledges the current catalog values and lets the next
+			// source diff decide whether the source should be applied again.
+			$result = BCS_Catalog_Writer::set_sync_state( $product_id, $hash, $connection_id );
+		}
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		BCS_Audit_Logger::log_row( 'bcs/sync-conflict', 'resolve_' . $resolution, 'ok', 0, $sku, absint( $product_id ), 'Sync conflict resolved: ' . $resolution . '.', sha1( 'conflict|' . $product_id . '|' . $resolution . '|' . $hash ), 0, 0, 'sync', $actor_via );
+		return array( 'product_id' => absint( $product_id ), 'resolution' => $resolution, 'resolved' => true );
+	}
+
+	/**
+	 * Build a canonical enough snapshot of current WooCommerce scalar fields.
+	 *
+	 * @param WC_Product $product Product.
+	 * @return array
+	 */
+	private static function current_product_payload( $product ) {
+		$payload = array();
+		$methods = array(
+			'sku'            => 'get_sku',
+			'name'           => 'get_name',
+			'regular_price'  => 'get_regular_price',
+			'sale_price'     => 'get_sale_price',
+			'stock_quantity' => 'get_stock_quantity',
+			'weight'         => 'get_weight',
+		);
+		foreach ( $methods as $key => $method ) {
+			if ( method_exists( $product, $method ) ) {
+				$payload[ $key ] = $product->{$method}( 'edit' );
+			}
+		}
+		return $payload;
+	}
+
+	/**
+	 * Find the latest persisted source operation for a flagged product.
+	 *
+	 * @param int    $product_id Product/variation ID.
+	 * @param string $sku Product/variation SKU.
+	 * @param int    $connection_id Optional connection filter.
+	 * @return array|null
+	 */
+	private static function find_conflict_operation( $product_id, $sku, $connection_id = 0 ) {
+		foreach ( self::list_runs( $connection_id, 500 ) as $run ) {
+			$diff = self::decode_diff( $run['diff_summary'] );
+			foreach ( (array) ( isset( $diff['operations'] ) ? $diff['operations'] : array() ) as $operation ) {
+				if ( ! is_array( $operation ) || 'conflict' !== (string) ( isset( $operation['op'] ) ? $operation['op'] : '' ) ) {
+					continue;
+				}
+				$before    = isset( $operation['before'] ) && is_array( $operation['before'] ) ? $operation['before'] : array();
+				$before_id = isset( $before['id'] ) ? absint( $before['id'] ) : 0;
+				$target_id = isset( $operation['target_product_id'] ) ? absint( $operation['target_product_id'] ) : 0;
+				if ( absint( $product_id ) === $before_id || absint( $product_id ) === $target_id ) {
+					return $operation;
+				}
+				$operation_sku = strtolower( trim( (string) ( isset( $operation['sku'] ) ? $operation['sku'] : '' ) ) );
+				$wanted_sku    = strtolower( trim( (string) $sku ) );
+				if ( '' !== $wanted_sku && $wanted_sku === $operation_sku && empty( $operation['variation_sku'] ) ) {
+					return $operation;
+				}
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Stable operation key for a quarantine entry.
+	 *
+	 * @param int   $run_id Run ID.
+	 * @param array $item Item.
+	 * @return string
+	 */
+	private static function quarantine_operation_key( $run_id, array $item ) {
+		return sha1( 'quarantine|' . absint( $run_id ) . '|' . (string) ( isset( $item['sku'] ) ? $item['sku'] : '' ) . '|' . (string) ( isset( $item['variation_sku'] ) ? $item['variation_sku'] : '' ) . '|' . (string) ( isset( $item['reason'] ) ? $item['reason'] : '' ) );
+	}
+
+	/**
 	 * Resume a stale applying run.
 	 *
 	 * @param int    $run_id Run ID.
@@ -376,7 +939,7 @@ class BCS_Sync_Runner {
 		}
 		$diff = self::decode_diff( $run['diff_summary'] );
 		if ( empty( $diff['operations'] ) && empty( $diff['summary'] ) ) {
-			return self::fail_run( $run_id, 'failed_guard', 'missing_diff', __( 'The applying run has no persisted diff to resume.', 'bulk-catalog-studio' ) );
+			return self::fail_run( $run_id, 'failed_guard', 'missing_diff', __( 'The applying run has no persisted diff to resume.', 'bulk-catalog-studio' ), $actor );
 		}
 		return self::apply_run( $run_id, $connection, $diff, $actor );
 	}
@@ -619,7 +1182,14 @@ class BCS_Sync_Runner {
 			$run_id,
 			array(
 				'diff_hash'    => $diff['diff_hash'],
-				'diff_summary' => self::json( array( 'summary' => $diff['summary'], 'quarantine' => $diff['quarantine'], 'operations' => $diff['operations'], 'seen_skus' => $diff['seen_skus'] ) ),
+				'diff_summary' => self::json(
+					array(
+						'summary'    => $diff['summary'],
+						'quarantine' => $diff['quarantine'],
+						'operations' => $diff['operations'],
+						'seen_skus'  => $diff['seen_skus'],
+					)
+				),
 				'heartbeat_at' => self::now_mysql(),
 			)
 		);
@@ -631,15 +1201,33 @@ class BCS_Sync_Runner {
 	 * @param int    $run_id Run ID.
 	 * @param string $state Failure state.
 	 * @param string $code Error code.
-	 * @param string $note Error note.
+	 * @param string $note  Error note.
+	 * @param string $actor Audit actor.
 	 * @return WP_Error
 	 */
-	private static function fail_run( $run_id, $state, $code, $note ) {
+	private static function fail_run( $run_id, $state, $code, $note, $actor = 'sync' ) {
 		$run = self::get_run( $run_id );
 		if ( $run && isset( self::allowed_transitions()[ $run['state'] ] ) && in_array( $state, self::allowed_transitions()[ $run['state'] ], true ) ) {
-			self::transition( $run_id, $run['state'], $state, array( 'error_code' => substr( sanitize_key( $code ), 0, 60 ), 'error_note' => sanitize_textarea_field( $note ), 'finished_at' => self::now_mysql(), 'heartbeat_at' => self::now_mysql() ) );
+			self::transition(
+				$run_id,
+				$run['state'],
+				$state,
+				array(
+					'error_code'   => substr( sanitize_key( $code ), 0, 60 ),
+					'error_note'   => sanitize_textarea_field( $note ),
+					'finished_at'  => self::now_mysql(),
+					'heartbeat_at' => self::now_mysql(),
+				)
+			);
 		} else {
-			self::update_run( $run_id, array( 'error_code' => substr( sanitize_key( $code ), 0, 60 ), 'error_note' => sanitize_textarea_field( $note ), 'finished_at' => self::now_mysql() ) );
+			self::update_run(
+				$run_id,
+				array(
+					'error_code'  => substr( sanitize_key( $code ), 0, 60 ),
+					'error_note'  => sanitize_textarea_field( $note ),
+					'finished_at' => self::now_mysql(),
+				)
+			);
 		}
 		if ( in_array( $code, array( 'schema_drift', 'fetch_not_csv', 'fetch_http', 'fetch_zero_rows' ), true ) ) {
 			$run = self::get_run( $run_id );
@@ -647,7 +1235,7 @@ class BCS_Sync_Runner {
 				BCS_Sync_Connection::update( $run['connection_id'], array( 'status' => 'error_state' ) );
 			}
 		}
-		BCS_Audit_Logger::log_call( 'bcs/sync-run', 'sync_run', 'failed', $note, $run_id, 0, null, 'sync', 'sync' );
+		BCS_Audit_Logger::log_call( 'bcs/sync-run', 'sync_run', 'failed', $note, $run_id, 0, null, 'sync', $actor );
 		return new WP_Error( $code, $note );
 	}
 
@@ -661,19 +1249,24 @@ class BCS_Sync_Runner {
 	private static function insert_run( $connection_id, $trigger ) {
 		global $wpdb;
 		$table = $wpdb->prefix . 'bcs_sync_runs';
-		$now = self::now_mysql();
-		$data = array(
-			'connection_id' => absint( $connection_id ),
-			'trigger'       => $trigger,
-			'state'         => 'pending',
-			'diff_hash'     => null,
-			'diff_summary'  => null,
-			'fetched_rows'  => 0,
-			'error_code'    => null,
-			'error_note'    => null,
-			'started_at'    => $now,
-			'finished_at'   => null,
-			'heartbeat_at'  => $now,
+		$now   = self::now_mysql();
+		$data  = array(
+			'connection_id'     => absint( $connection_id ),
+			'trigger'           => $trigger,
+			'state'             => 'pending',
+			'diff_hash'         => null,
+			'diff_summary'      => null,
+			'token_hash'        => null,
+			'token_expires_at'  => null,
+			'token_used_at'     => null,
+			'approved_by'       => null,
+			'approved_at'       => null,
+			'fetched_rows'      => 0,
+			'error_code'        => null,
+			'error_note'        => null,
+			'started_at'        => $now,
+			'finished_at'       => null,
+			'heartbeat_at'      => $now,
 		);
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- custom table; wpdb insert prepares values.
 		$inserted = $wpdb->insert( $table, $data, self::formats( $data ) );
@@ -692,7 +1285,7 @@ class BCS_Sync_Runner {
 	 */
 	private static function update_run( $run_id, array $fields ) {
 		global $wpdb;
-		$allowed = array( 'connection_id', 'trigger', 'state', 'diff_hash', 'diff_summary', 'fetched_rows', 'error_code', 'error_note', 'started_at', 'finished_at', 'heartbeat_at' );
+		$allowed = array( 'connection_id', 'trigger', 'state', 'diff_hash', 'diff_summary', 'token_hash', 'token_expires_at', 'token_used_at', 'approved_by', 'approved_at', 'fetched_rows', 'error_code', 'error_note', 'started_at', 'finished_at', 'heartbeat_at' );
 		$data = array();
 		foreach ( $fields as $key => $value ) {
 			if ( in_array( $key, $allowed, true ) ) {
@@ -727,7 +1320,14 @@ class BCS_Sync_Runner {
 	 * @return array
 	 */
 	private static function with_run_result( $run_id, array $diff, $state ) {
-		return array_merge( $diff, array( 'run_id' => (int) $run_id, 'state' => $state, 'status' => $state ) );
+		return array_merge(
+			$diff,
+			array(
+				'run_id' => (int) $run_id,
+				'state'  => $state,
+				'status' => $state,
+			)
+		);
 	}
 
 	/**
@@ -739,18 +1339,23 @@ class BCS_Sync_Runner {
 	private static function normalize_run( $row ) {
 		$row = is_object( $row ) ? get_object_vars( $row ) : (array) $row;
 		return array(
-			'id'            => (int) ( isset( $row['id'] ) ? $row['id'] : 0 ),
-			'connection_id' => (int) ( isset( $row['connection_id'] ) ? $row['connection_id'] : 0 ),
-			'trigger'       => (string) ( isset( $row['trigger'] ) ? $row['trigger'] : '' ),
-			'state'         => (string) ( isset( $row['state'] ) ? $row['state'] : '' ),
-			'diff_hash'     => isset( $row['diff_hash'] ) ? $row['diff_hash'] : null,
-			'diff_summary'  => isset( $row['diff_summary'] ) ? $row['diff_summary'] : null,
-			'fetched_rows'  => (int) ( isset( $row['fetched_rows'] ) ? $row['fetched_rows'] : 0 ),
-			'error_code'    => isset( $row['error_code'] ) ? $row['error_code'] : null,
-			'error_note'    => isset( $row['error_note'] ) ? $row['error_note'] : null,
-			'started_at'    => isset( $row['started_at'] ) ? $row['started_at'] : null,
-			'finished_at'   => isset( $row['finished_at'] ) ? $row['finished_at'] : null,
-			'heartbeat_at'  => isset( $row['heartbeat_at'] ) ? $row['heartbeat_at'] : null,
+			'id'               => (int) ( isset( $row['id'] ) ? $row['id'] : 0 ),
+			'connection_id'    => (int) ( isset( $row['connection_id'] ) ? $row['connection_id'] : 0 ),
+			'trigger'          => (string) ( isset( $row['trigger'] ) ? $row['trigger'] : '' ),
+			'state'            => (string) ( isset( $row['state'] ) ? $row['state'] : '' ),
+			'diff_hash'        => isset( $row['diff_hash'] ) ? $row['diff_hash'] : null,
+			'diff_summary'     => isset( $row['diff_summary'] ) ? $row['diff_summary'] : null,
+			'fetched_rows'     => (int) ( isset( $row['fetched_rows'] ) ? $row['fetched_rows'] : 0 ),
+			'error_code'       => isset( $row['error_code'] ) ? $row['error_code'] : null,
+			'error_note'       => isset( $row['error_note'] ) ? $row['error_note'] : null,
+			'started_at'       => isset( $row['started_at'] ) ? $row['started_at'] : null,
+			'finished_at'      => isset( $row['finished_at'] ) ? $row['finished_at'] : null,
+			'heartbeat_at'     => isset( $row['heartbeat_at'] ) ? $row['heartbeat_at'] : null,
+			'token_hash'       => isset( $row['token_hash'] ) ? $row['token_hash'] : null,
+			'token_expires_at' => isset( $row['token_expires_at'] ) ? $row['token_expires_at'] : null,
+			'token_used_at'    => isset( $row['token_used_at'] ) ? $row['token_used_at'] : null,
+			'approved_by'      => isset( $row['approved_by'] ) ? ( $row['approved_by'] ? (int) $row['approved_by'] : null ) : null,
+			'approved_at'      => isset( $row['approved_at'] ) ? $row['approved_at'] : null,
 		);
 	}
 
@@ -799,7 +1404,17 @@ class BCS_Sync_Runner {
 	 * @return array
 	 */
 	private static function empty_apply_summary() {
-		return array( 'create' => 0, 'update' => 0, 'update_variation' => 0, 'delete' => 0, 'flag_missing' => 0, 'conflict' => 0, 'quarantined' => 0, 'failed' => 0, 'total_operations' => 0 );
+		return array(
+			'create'           => 0,
+			'update'           => 0,
+			'update_variation' => 0,
+			'delete'           => 0,
+			'flag_missing'     => 0,
+			'conflict'         => 0,
+			'quarantined'      => 0,
+			'failed'           => 0,
+			'total_operations' => 0,
+		);
 	}
 
 	/**
@@ -836,6 +1451,6 @@ class BCS_Sync_Runner {
 	 * @return string
 	 */
 	private static function json( $value ) {
-		return function_exists( 'wp_json_encode' ) ? (string) wp_json_encode( $value ) : (string) json_encode( $value );
+		return (string) wp_json_encode( $value );
 	}
 }

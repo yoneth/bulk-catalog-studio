@@ -162,6 +162,11 @@ class BCS_Install {
 			state VARCHAR(20) NOT NULL DEFAULT 'pending',
 			diff_hash CHAR(40) NULL DEFAULT NULL,
 			diff_summary LONGTEXT NULL,
+			token_hash VARCHAR(255) NULL DEFAULT NULL,
+			token_expires_at DATETIME NULL DEFAULT NULL,
+			token_used_at DATETIME NULL DEFAULT NULL,
+			approved_by BIGINT UNSIGNED NULL DEFAULT NULL,
+			approved_at DATETIME NULL DEFAULT NULL,
 			fetched_rows INT UNSIGNED NOT NULL DEFAULT 0,
 			error_code VARCHAR(60) NULL DEFAULT NULL,
 			error_note TEXT NULL,
@@ -179,6 +184,7 @@ class BCS_Install {
 		// dbDelta tidak selalu menambahkan kolom baru pada tabel existing.
 		self::maybe_upgrade_audit_source_column();
 		self::maybe_upgrade_audit_actor_via_column();
+		self::maybe_upgrade_sync_run_approval_columns();
 
 		// Default settings hanya diisi bila belum ada (reactivation tidak menimpa).
 		add_option( 'bcs_settings', BCS_Settings::defaults() );
@@ -206,6 +212,32 @@ class BCS_Install {
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.PreparedSQL.NotPrepared -- nama tabel dari prefix terkontrol; schema upgrade.
 		$wpdb->query( "ALTER TABLE {$table} ADD COLUMN source VARCHAR(10) NOT NULL DEFAULT 'batch' AFTER actor_via" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+	}
+
+	/**
+	 * Tambahkan kolom token/approval run pada instalasi fase 1–4 bila belum ada.
+	 *
+	 * @return void
+	 */
+	public static function maybe_upgrade_sync_run_approval_columns() {
+		global $wpdb;
+
+		$table = $wpdb->prefix . 'bcs_sync_runs';
+		$columns = array(
+			'token_hash'       => 'VARCHAR(255) NULL DEFAULT NULL',
+			'token_expires_at' => 'DATETIME NULL DEFAULT NULL',
+			'token_used_at'    => 'DATETIME NULL DEFAULT NULL',
+			'approved_by'      => 'BIGINT UNSIGNED NULL DEFAULT NULL',
+			'approved_at'      => 'DATETIME NULL DEFAULT NULL',
+		);
+		foreach ( $columns as $name => $definition ) {
+			$column = $wpdb->get_row( $wpdb->prepare( "SHOW COLUMNS FROM {$table} LIKE %s", $name ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table from prefix.
+			if ( $column ) {
+				continue;
+			}
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.PreparedSQL.NotPrepared -- controlled table/column names; schema upgrade.
+			$wpdb->query( "ALTER TABLE {$table} ADD COLUMN {$name} {$definition}" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		}
 	}
 
 	/**

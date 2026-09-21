@@ -1,6 +1,6 @@
 <?php
 /**
- * Registrar 8 ability BCS ke WordPress Abilities API + MCP Adapter (spec §1).
+ * Registrar 11 ability BCS ke WordPress Abilities API + MCP Adapter (spec §1).
  *
  * Ikuti riset terverifikasi docs/research/abilities-mcp-api.md:
  * - Hook kategori: wp_abilities_api_categories_init (SEBELUM abilities init).
@@ -40,7 +40,7 @@ class BCS_Abilities {
 	}
 
 	/**
-	 * Registrasi 8 ability.
+	 * Registrasi 11 ability.
 	 *
 	 * @return void
 	 */
@@ -62,7 +62,7 @@ class BCS_Abilities {
 	}
 
 	/**
-	 * Definisi lengkap 8 ability.
+	 * Definisi lengkap 11 ability.
 	 *
 	 * @return array name => args
 	 */
@@ -159,6 +159,39 @@ class BCS_Abilities {
 				'execute_callback'    => array( __CLASS__, 'execute_audit_log' ),
 				'permission_callback' => array( __CLASS__, 'can_edit_products' ),
 				'meta'                => self::meta( array( 'readonly' => true, 'idempotent' => true ) ),
+			),
+
+			'bcs/sync-list-connections' => array(
+				'label'               => __( 'BCS: List Sync Connections', 'bulk-catalog-studio' ),
+				'description'         => __( 'List configured catalog sync connections, their latest run summaries, next due time, and pending conflict or quarantine counts. Read-only.', 'bulk-catalog-studio' ),
+				'category'            => 'bcs',
+				'input_schema'        => BCS_Schemas::input( 'bcs/sync-list-connections' ),
+				'output_schema'       => BCS_Schemas::output( 'bcs/sync-list-connections' ),
+				'execute_callback'    => array( __CLASS__, 'execute_sync_list_connections' ),
+				'permission_callback' => array( __CLASS__, 'can_manage_woocommerce' ),
+				'meta'                => self::meta( array( 'readonly' => true, 'idempotent' => true ) ),
+			),
+
+			'bcs/sync-run' => array(
+				'label'               => __( 'BCS: Run Sync', 'bulk-catalog-studio' ),
+				'description'         => __( 'Run one configured sync connection through fetch, diff, guards, threshold approval, and the catalog writer. An active run is rejected rather than run in parallel.', 'bulk-catalog-studio' ),
+				'category'            => 'bcs',
+				'input_schema'        => BCS_Schemas::input( 'bcs/sync-run' ),
+				'output_schema'       => BCS_Schemas::output( 'bcs/sync-run' ),
+				'execute_callback'    => array( __CLASS__, 'execute_sync_run' ),
+				'permission_callback' => array( __CLASS__, 'can_manage_woocommerce' ),
+				'meta'                => self::meta( array( 'readonly' => false, 'idempotent' => true ) ),
+			),
+
+			'bcs/sync-approve-run' => array(
+				'label'               => __( 'BCS: Approve Sync Run', 'bulk-catalog-studio' ),
+				'description'         => __( 'Approve an awaiting_approval sync run only when the supplied diff_hash and one-time confirmation token match. The state transition happens before atomic token consumption.', 'bulk-catalog-studio' ),
+				'category'            => 'bcs',
+				'input_schema'        => BCS_Schemas::input( 'bcs/sync-approve-run' ),
+				'output_schema'       => BCS_Schemas::output( 'bcs/sync-approve-run' ),
+				'execute_callback'    => array( __CLASS__, 'execute_sync_approve_run' ),
+				'permission_callback' => array( __CLASS__, 'can_manage_woocommerce' ),
+				'meta'                => self::meta( array( 'readonly' => false, 'destructive' => false ) ),
 			),
 		);
 	}
@@ -1023,6 +1056,191 @@ class BCS_Abilities {
 			'job_id'  => $job_id,
 			'total'   => $result['total'],
 			'entries' => $result['entries'],
+		);
+	}
+
+	/**
+	 * bcs/sync-list-connections.
+	 *
+	 * @param array $input Input (empty object).
+	 * @return array|WP_Error
+	 */
+	public static function execute_sync_list_connections( $input ) {
+		$guard = self::server_guard( 'manage_woocommerce', 'bcs/sync-list-connections' );
+		if ( is_wp_error( $guard ) ) {
+			return $guard;
+		}
+
+		$connections = BCS_Sync_Connection::list_connections();
+		if ( is_wp_error( $connections ) ) {
+			return $connections;
+		}
+
+		$output = array();
+		foreach ( (array) $connections as $connection ) {
+			$connection = is_array( $connection ) ? $connection : array();
+			$connection_id = isset( $connection['id'] ) ? absint( $connection['id'] ) : 0;
+			$last_run      = $connection_id ? BCS_Sync_Runner::latest_run( $connection_id ) : null;
+			$last_run_out  = null;
+
+			if ( is_array( $last_run ) ) {
+				$last_run_out = array(
+					'run_id'  => (int) $last_run['id'],
+					'state'   => (string) $last_run['state'],
+					'summary' => self::sync_list_summary( self::decode_sync_summary( $last_run['diff_summary'] ) ),
+				);
+			}
+
+			$last_ok_run_at = isset( $connection['last_ok_run_at'] ) ? $connection['last_ok_run_at'] : null;
+			$next_run_at    = isset( $connection['next_run_at'] ) ? $connection['next_run_at'] : null;
+			if ( null === $next_run_at && method_exists( 'BCS_Sync_Connection', 'next_run_at' ) ) {
+				$next_run_at = BCS_Sync_Connection::next_run_at( $connection, $last_ok_run_at );
+			}
+
+			$output[] = array(
+				'connection_id'    => $connection_id,
+				'name'             => isset( $connection['name'] ) ? (string) $connection['name'] : '',
+				'fetcher'          => isset( $connection['fetcher'] ) ? (string) $connection['fetcher'] : '',
+				'sheet_ref'        => self::sync_sheet_ref( $connection ),
+				'status'           => isset( $connection['status'] ) ? (string) $connection['status'] : 'paused',
+				'interval_minutes' => isset( $connection['interval_minutes'] ) ? max( 1, (int) $connection['interval_minutes'] ) : 1,
+				'last_run'         => $last_run_out,
+				'next_run_at'      => $next_run_at,
+			);
+		}
+
+		$pending = BCS_Sync_Runner::pending_counts();
+		if ( is_wp_error( $pending ) || ! is_array( $pending ) ) {
+			$pending = array( 'conflicts_pending' => 0, 'quarantine_pending' => 0 );
+		}
+
+		return array(
+			'connections'       => $output,
+			'conflicts_pending'  => isset( $pending['conflicts_pending'] ) ? (int) $pending['conflicts_pending'] : 0,
+			'quarantine_pending' => isset( $pending['quarantine_pending'] ) ? (int) $pending['quarantine_pending'] : 0,
+		);
+	}
+
+	/**
+	 * bcs/sync-run.
+	 *
+	 * @param array $input Input tervalidasi schema.
+	 * @return array|WP_Error
+	 */
+	public static function execute_sync_run( $input ) {
+		$guard = self::server_guard( 'manage_woocommerce', 'bcs/sync-run' );
+		if ( is_wp_error( $guard ) ) {
+			return $guard;
+		}
+
+		$connection_id = absint( self::in( $input, 'connection_id', 0 ) );
+		$reason        = sanitize_key( (string) self::in( $input, 'reason', 'manual' ) );
+		if ( ! in_array( $reason, array( 'manual', 'cron', 'webhook' ), true ) ) {
+			$reason = 'manual';
+		}
+
+		$result = BCS_Sync_Runner::run( $connection_id, $reason, 'mcp' );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$result = is_array( $result ) ? $result : array();
+		$status = isset( $result['status'] ) ? (string) $result['status'] : ( isset( $result['state'] ) ? (string) $result['state'] : 'done' );
+
+		return array(
+			'run_id'        => isset( $result['run_id'] ) ? (int) $result['run_id'] : 0,
+			'connection_id' => $connection_id,
+			'state'         => isset( $result['state'] ) ? (string) $result['state'] : $status,
+			'status'        => $status,
+			'diff_hash'     => isset( $result['diff_hash'] ) ? $result['diff_hash'] : null,
+			'summary'       => isset( $result['summary'] ) && is_array( $result['summary'] ) ? $result['summary'] : array(),
+			'quarantine'    => isset( $result['quarantine'] ) && is_array( $result['quarantine'] ) ? $result['quarantine'] : array(),
+			'duration_ms'   => isset( $result['duration_ms'] ) ? (int) $result['duration_ms'] : 0,
+			'deferred'      => ! empty( $result['deferred'] ),
+		);
+	}
+
+	/**
+	 * bcs/sync-approve-run.
+	 *
+	 * @param array $input Input tervalidasi schema.
+	 * @return array|WP_Error
+	 */
+	public static function execute_sync_approve_run( $input ) {
+		$guard = self::server_guard( 'manage_woocommerce', 'bcs/sync-approve-run' );
+		if ( is_wp_error( $guard ) ) {
+			return $guard;
+		}
+
+		$run_id = absint( self::in( $input, 'run_id', 0 ) );
+		$hash   = sanitize_text_field( (string) self::in( $input, 'diff_hash', '' ) );
+		$token  = strtoupper( sanitize_text_field( (string) self::in( $input, 'confirmation_token', '' ) ) );
+
+		$approved = BCS_Sync_Runner::approve_run( $run_id, $hash, $token, get_current_user_id() );
+		if ( is_wp_error( $approved ) ) {
+			return $approved;
+		}
+
+		return array(
+			'run_id'        => (int) $approved['id'],
+			'connection_id' => (int) $approved['connection_id'],
+			'status'        => 'approved',
+			'diff_hash'     => (string) $approved['diff_hash'],
+			'approved_by'   => isset( $approved['approved_by'] ) ? (int) $approved['approved_by'] : get_current_user_id(),
+			'approved_at'   => ! empty( $approved['approved_at'] ) ? mysql2date( 'c', $approved['approved_at'] ) : gmdate( 'c' ),
+			'note'          => '',
+		);
+	}
+
+	/**
+	 * Format the human-readable sheet reference without exposing credentials.
+	 *
+	 * @param array $connection Connection.
+	 * @return string
+	 */
+	private static function sync_sheet_ref( array $connection ) {
+		$config = isset( $connection['sheet_config'] ) && is_array( $connection['sheet_config'] ) ? $connection['sheet_config'] : array();
+		$ref = '';
+		foreach ( array( 'spreadsheet_id', 'sheet_id', 'id' ) as $key ) {
+			if ( ! empty( $config[ $key ] ) ) {
+				$ref = sanitize_text_field( (string) $config[ $key ] );
+				break;
+			}
+		}
+		if ( '' === $ref && ! empty( $config['url'] ) ) {
+			$ref = sanitize_text_field( (string) $config['url'] );
+		}
+		$gid = isset( $config['gid'] ) && '' !== (string) $config['gid'] ? (string) $config['gid'] : '0';
+		return '' === $ref ? '(gid ' . $gid . ')' : $ref . ' (gid ' . $gid . ')';
+	}
+
+	/**
+	 * Decode a persisted sync summary/diff safely.
+	 *
+	 * @param mixed $json JSON or decoded value.
+	 * @return array
+	 */
+	private static function decode_sync_summary( $json ) {
+		$value = is_array( $json ) ? $json : json_decode( (string) $json, true );
+		return is_array( $value ) ? $value : array();
+	}
+
+	/**
+	 * Keep the public connection summary stable across runner versions.
+	 *
+	 * @param array $diff Persisted diff.
+	 * @return array
+	 */
+	private static function sync_list_summary( array $diff ) {
+		$summary = isset( $diff['summary'] ) && is_array( $diff['summary'] ) ? $diff['summary'] : $diff;
+		return array(
+			'create'           => isset( $summary['create'] ) ? (int) $summary['create'] : 0,
+			'update'           => isset( $summary['update'] ) ? (int) $summary['update'] : 0,
+			'variation_update' => isset( $summary['variation_update'] ) ? (int) $summary['variation_update'] : ( isset( $summary['update_variation'] ) ? (int) $summary['update_variation'] : 0 ),
+			'delete'           => isset( $summary['delete'] ) ? (int) $summary['delete'] : 0,
+			'quarantined'      => isset( $summary['quarantined'] ) ? (int) $summary['quarantined'] : 0,
+			'conflict'         => isset( $summary['conflict'] ) ? (int) $summary['conflict'] : 0,
+			'failed'           => isset( $summary['failed'] ) ? (int) $summary['failed'] : 0,
 		);
 	}
 }

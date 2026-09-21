@@ -4,7 +4,7 @@
 #                terhadap CUSTOM MCP SERVER (bcs-mcp, HTTP-only).
 #
 # Cek: tooling → WP reachable → plugin mcp-adapter + woocommerce +
-# bulk-catalog-studio aktif → permalink bukan Plain → 3 tabel bcs_* →
+# bulk-catalog-studio aktif → permalink bukan Plain → 5 tabel bcs_* →
 # fixture CSV → endpoint custom (BCS_MCP_ENDPOINT) balas 401 tanpa auth →
 # transport HTTP + kredensial env → initialize menghasilkan Mcp-Session-Id.
 #
@@ -49,18 +49,18 @@ fi
 
 # --- 7. Ability bcs/parse-source terdaftar di registry WP -------------------
 if [ "$(bcs_wp eval 'echo wp_has_ability("bcs/parse-source") ? "yes" : "no";' 2>/dev/null | tail -n 1 || true)" = "yes" ]; then
-	bcs_pass "abilities-registered" "bcs/parse-source is registered (source for 8 custom-server tools)"
+	bcs_pass "abilities-registered" "bcs/parse-source is registered (source for 11 custom-server tools)"
 else
-	bcs_stop "abilities-registered" "bcs/parse-source is NOT registered — the custom server will not expose bcs-* tools"
+	bcs_stop "abilities-registered" "bcs/parse-source is NOT registered — the custom server will not expose the BCS tools"
 fi
 
 # --- 8. Tabel bcs_* ada (aktivasi sukses) -----------------------------------
 prefix="$(bcs_table_prefix)"
-tables_found="$(bcs_db_scalar "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('${prefix}bcs_jobs','${prefix}bcs_plans','${prefix}bcs_audit');")" || tables_found=""
-if [ "${tables_found:-0}" -ge 3 ] 2>/dev/null; then
-	bcs_pass "bcs-tables" "3 bcs_* tables exist (prefix: $prefix)"
+tables_found="$(bcs_db_scalar "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('${prefix}bcs_jobs','${prefix}bcs_plans','${prefix}bcs_audit','${prefix}bcs_connections','${prefix}bcs_sync_runs');")" || tables_found=""
+if [ "${tables_found:-0}" -ge 5 ] 2>/dev/null; then
+	bcs_pass "bcs-tables" "5 bcs_* tables exist (prefix: $prefix)"
 else
-	bcs_stop "bcs-tables" "fewer than 3 bcs_* tables found (${tables_found:-?}) — activate the plugin"
+	bcs_stop "bcs-tables" "fewer than 5 bcs_* tables found (${tables_found:-?}) — activate or upgrade the plugin"
 fi
 
 # --- 9. Fixture CSV tersedia -------------------------------------------------

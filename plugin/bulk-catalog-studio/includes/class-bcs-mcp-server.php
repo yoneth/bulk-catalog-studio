@@ -9,7 +9,7 @@
  *
  * - Endpoint utama menjadi `/wp-json/bcs-mcp/mcp` — nol ketergantungan pada
  *   route Novamira.
- * - 8 ability BCS tampil sebagai tool INDIVIDUAL di `tools/list` (perilaku
+ * - 11 ability BCS tampil sebagai tool INDIVIDUAL di `tools/list` (perilaku
  *   custom server — riset §3.1), bukan hanya via meta-tools.
  * - Transport permission: `current_user_can( 'manage_woocommerce' )`.
  *
@@ -99,7 +99,7 @@ class BCS_MCP_Server {
 	 * @return string
 	 */
 	public static function description() {
-		return __( 'Bulk Catalog Studio custom MCP server — the 8 bcs/* abilities as individual tools on the /wp-json/bcs-mcp/mcp endpoint (no dependency on the Novamira-intercepted default route).', 'bulk-catalog-studio' );
+		return __( 'Bulk Catalog Studio custom MCP server — the 11 bcs/* abilities as individual tools on the /wp-json/bcs-mcp/mcp endpoint (no dependency on the Novamira-intercepted default route).', 'bulk-catalog-studio' );
 	}
 
 	/**
@@ -139,7 +139,7 @@ class BCS_MCP_Server {
 	}
 
 	/**
-	 * 8 ability BCS yang diekspos (urutan sama dengan registrar).
+	 * 11 ability BCS yang diekspos (urutan sama dengan registrar).
 	 *
 	 * @return array
 	 */
@@ -205,11 +205,11 @@ class BCS_MCP_Server {
 			return false;
 		}
 
-		// Guard: 8 ability harus sudah terdaftar (hook wp_abilities_api_init
+		// Guard: 11 ability harus sudah terdaftar (hook wp_abilities_api_init
 		// berjalan lebih dulu; registrasi manual di luar hook itu ditolak core).
 		if ( ! self::abilities_registered() ) {
 			self::$dependency_missing         = true;
-			self::$dependency_missing_reason = __( 'The Abilities API does not contain the 8 bcs/* abilities yet — the custom MCP server was not registered.', 'bulk-catalog-studio' );
+			self::$dependency_missing_reason = __( 'The Abilities API does not contain the 11 bcs/* abilities yet — the custom MCP server was not registered.', 'bulk-catalog-studio' );
 
 			return false;
 		}
@@ -263,7 +263,7 @@ class BCS_MCP_Server {
 	}
 
 	/**
-	 * Apakah 8 ability BCS sudah terdaftar di registry Abilities API?
+	 * Apakah 11 ability BCS sudah terdaftar di registry Abilities API?
 	 *
 	 * @return bool
 	 */

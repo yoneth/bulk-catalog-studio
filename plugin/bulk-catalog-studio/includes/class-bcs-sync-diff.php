@@ -244,18 +244,21 @@ class BCS_Sync_Diff {
 				}
 				$variation_hash = self::hash_for_payload( $variation_payload );
 				if ( self::record_changed( $variation_payload, $before_variation, $variation_hash ) ) {
+					$variation_conflict = self::is_conflict( $before_variation );
 					$variation_operation = self::operation(
-						'update_variation',
+						$variation_conflict ? 'conflict' : 'update_variation',
 						$sku,
 						$variation_sku,
 						$variation_payload,
 						$before_variation,
-						'variation_changed',
+						$variation_conflict ? 'manual_edit_conflict' : 'variation_changed',
 						$variation_hash
 					);
-					// The writer receives the parent ID; the before snapshot still
-					// retains the child variation ID for audit/rollback.
-					if ( is_array( $existing ) && isset( $existing['id'] ) ) {
+					// The writer receives the parent ID for a normal variation update;
+					// a conflict flag must target the child variation itself.
+					if ( $variation_conflict && is_array( $before_variation ) && isset( $before_variation['id'] ) ) {
+						$variation_operation['target_product_id'] = (int) $before_variation['id'];
+					} elseif ( is_array( $existing ) && isset( $existing['id'] ) ) {
 						$variation_operation['target_product_id'] = (int) $existing['id'];
 					}
 					$operations[] = $variation_operation;

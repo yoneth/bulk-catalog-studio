@@ -1,6 +1,6 @@
 <?php
 /**
- * JSON Schema input/output untuk 8 ability BCS (spec §1).
+ * JSON Schema input/output untuk 11 ability BCS (spec §1).
  *
  * Semua input schema strict: additionalProperties: false (spec §5.5.1).
  * Schema disalin persis dari docs/spec/bulk-catalog-studio.md §1, dengan satu
@@ -32,6 +32,9 @@ class BCS_Schemas {
 			'bcs/job-status',
 			'bcs/rollback-batch',
 			'bcs/audit-log',
+			'bcs/sync-list-connections',
+			'bcs/sync-run',
+			'bcs/sync-approve-run',
 		);
 	}
 
@@ -334,6 +337,61 @@ class BCS_Schemas {
 					),
 					'required'             => array( 'job_id' ),
 				);
+
+			case 'bcs/sync-list-connections':
+				return array(
+					'type'                 => 'object',
+					'additionalProperties' => false,
+					'properties'           => array(),
+					'required'             => array(),
+				);
+
+			case 'bcs/sync-run':
+				return array(
+					'type'                 => 'object',
+					'additionalProperties' => false,
+					'properties'           => array(
+						'connection_id' => array(
+							'type'        => 'integer',
+							'minimum'     => 1,
+							'description' => __( 'The sync connection to run.', 'bulk-catalog-studio' ),
+						),
+						'reason'       => array(
+							'type'        => 'string',
+							'enum'        => array( 'manual', 'cron', 'webhook' ),
+							'default'     => 'manual',
+							'description' => __( 'Why this run was requested. Manual is the default for agent calls.', 'bulk-catalog-studio' ),
+						),
+					),
+					'required'             => array( 'connection_id' ),
+				);
+
+			case 'bcs/sync-approve-run':
+				return array(
+					'type'                 => 'object',
+					'additionalProperties' => false,
+					'properties'           => array(
+						'run_id'             => array(
+							'type'        => 'integer',
+							'minimum'     => 1,
+							'description' => __( 'The awaiting_approval sync run to approve.', 'bulk-catalog-studio' ),
+						),
+						'diff_hash'          => array(
+							'type'        => 'string',
+							'minLength'   => 40,
+							'maxLength'   => 40,
+							'description' => __( 'The SHA-1 hash of the persisted sync diff.', 'bulk-catalog-studio' ),
+						),
+						'confirmation_token' => array(
+							'type'        => 'string',
+							'minLength'   => 6,
+							'maxLength'   => 12,
+							'pattern'     => '^[A-Z0-9-]+$',
+							'description' => __( 'One-time token shown only on the WP admin Sync run screen.', 'bulk-catalog-studio' ),
+						),
+					),
+					'required'             => array( 'run_id', 'diff_hash', 'confirmation_token' ),
+				);
 		}
 
 		return array( 'type' => 'object', 'properties' => array() );
@@ -573,6 +631,121 @@ class BCS_Schemas {
 						),
 					),
 					'required'             => array( 'job_id', 'total', 'entries' ),
+				);
+
+			case 'bcs/sync-list-connections':
+				return array(
+					'type'                 => 'object',
+					'additionalProperties' => false,
+					'properties'           => array(
+						'connections' => array(
+							'type'  => 'array',
+							'items' => array(
+								'type'                 => 'object',
+								'additionalProperties' => false,
+								'properties'           => array(
+									'connection_id'    => array( 'type' => 'integer' ),
+									'name'            => array( 'type' => 'string' ),
+									'fetcher'         => array( 'type' => 'string' ),
+									'sheet_ref'       => array( 'type' => 'string' ),
+									'status'          => array( 'type' => 'string', 'enum' => array( 'active', 'paused', 'error_state' ) ),
+									'interval_minutes' => array( 'type' => 'integer' ),
+									'last_run'        => array(
+										'type' => array( 'object', 'null' ),
+										'additionalProperties' => false,
+										'properties' => array(
+											'run_id' => array( 'type' => 'integer' ),
+											'state' => array( 'type' => 'string' ),
+											'summary' => array(
+												'type'                 => 'object',
+												'additionalProperties' => false,
+												'properties'           => array(
+													'create'           => array( 'type' => 'integer' ),
+													'update'           => array( 'type' => 'integer' ),
+													'variation_update' => array( 'type' => 'integer' ),
+													'delete'           => array( 'type' => 'integer' ),
+													'quarantined'      => array( 'type' => 'integer' ),
+													'conflict'         => array( 'type' => 'integer' ),
+													'failed'           => array( 'type' => 'integer' ),
+												),
+											),
+										),
+										'required' => array( 'run_id', 'state', 'summary' ),
+									),
+									'next_run_at'     => array( 'type' => array( 'string', 'null' ), 'format' => 'date-time' ),
+								),
+								'required'             => array( 'connection_id', 'name', 'fetcher', 'sheet_ref', 'status', 'interval_minutes', 'last_run', 'next_run_at' ),
+							),
+						),
+						'conflicts_pending'  => array( 'type' => 'integer' ),
+						'quarantine_pending' => array( 'type' => 'integer' ),
+					),
+					'required'             => array( 'connections', 'conflicts_pending', 'quarantine_pending' ),
+				);
+
+			case 'bcs/sync-run':
+				return array(
+					'type'                 => 'object',
+					'additionalProperties' => false,
+					'properties'           => array(
+						'run_id'        => array( 'type' => 'integer' ),
+						'connection_id' => array( 'type' => 'integer' ),
+						'state'         => array( 'type' => 'string' ),
+						'status'        => array( 'type' => 'string' ),
+						'diff_hash'     => array( 'type' => array( 'string', 'null' ) ),
+						'summary'       => array(
+							'type'                 => 'object',
+							'additionalProperties' => false,
+							'properties'           => array(
+								'create'           => array( 'type' => 'integer' ),
+								'update'           => array( 'type' => 'integer' ),
+								'update_variation' => array( 'type' => 'integer' ),
+								'delete'           => array( 'type' => 'integer' ),
+								'flag_missing'     => array( 'type' => 'integer' ),
+								'conflict'         => array( 'type' => 'integer' ),
+								'quarantined'      => array( 'type' => 'integer' ),
+								'failed'           => array( 'type' => 'integer' ),
+								'total_operations' => array( 'type' => 'integer' ),
+							),
+						),
+						'quarantine'    => array(
+							'type'  => 'array',
+							'items' => array(
+								'type'                 => 'object',
+								'additionalProperties' => false,
+								'properties'           => array(
+									'sku'           => array( 'type' => 'string' ),
+									'variation_sku' => array( 'type' => array( 'string', 'null' ) ),
+									'reason'        => array( 'type' => 'string' ),
+									'payload'       => array( 'type' => 'object', 'additionalProperties' => true ),
+									'before'        => array( 'type' => array( 'object', 'null' ), 'additionalProperties' => true ),
+									'resolved'      => array( 'type' => 'boolean' ),
+									'resolution'    => array( 'type' => array( 'string', 'null' ) ),
+									'resolved_at'   => array( 'type' => array( 'string', 'null' ), 'format' => 'date-time' ),
+									'resolved_by'   => array( 'type' => array( 'integer', 'null' ) ),
+								),
+							),
+						),
+						'duration_ms'   => array( 'type' => 'integer' ),
+						'deferred'      => array( 'type' => 'boolean' ),
+					),
+					'required'             => array( 'run_id', 'connection_id', 'status' ),
+				);
+
+			case 'bcs/sync-approve-run':
+				return array(
+					'type'                 => 'object',
+					'additionalProperties' => false,
+					'properties'           => array(
+						'run_id'      => array( 'type' => 'integer' ),
+						'connection_id' => array( 'type' => 'integer' ),
+						'status'      => array( 'type' => 'string', 'const' => 'approved' ),
+						'diff_hash'   => array( 'type' => 'string' ),
+						'approved_by' => array( 'type' => 'integer' ),
+						'approved_at' => array( 'type' => 'string', 'format' => 'date-time' ),
+						'note'       => array( 'type' => 'string' ),
+					),
+					'required'             => array( 'run_id', 'connection_id', 'status', 'diff_hash', 'approved_at' ),
 				);
 		}
 

@@ -5,7 +5,7 @@
 #
 #   Endpoint : https://cf.djavaweb.com/wp-json/bcs-mcp/mcp   (env BCS_MCP_ENDPOINT)
 #   serverInfo.name : "Bulk Catalog Studio MCP"
-#   tools/list      : 8 tool individual (bcs-parse-source, … bcs-audit-log)
+#   tools/list      : 11 tool individual (bcs-parse-source, … bcs-sync-approve-run)
 #   Invocation      : tools/call LANGSUNG ke nama tool individual —
 #                     TIDAK ada meta-tool mcp-adapter-discover-abilities /
 #                     mcp-adapter-execute-ability di custom server.
@@ -39,8 +39,8 @@ BCS_FIXTURE="${BCS_FIXTURE:-$REPO_ROOT/plugin/bulk-catalog-studio/tests/fixtures
 BCS_RESULTS_FILE="${BCS_RESULTS_FILE:-/tmp/bcs-e2e-results-${BCS_SCRIPT_NAME:-run}.jsonl}"
 BCS_INIT_BODY="${BCS_INIT_BODY:-/tmp/bcs-e2e-init.json}" # body response initialize
 
-# 8 tool individual custom server (nama dash — bukan bcs/* dan bukan meta-tool).
-BCS_EXPECTED_TOOLS="bcs-parse-source bcs-check-duplicates bcs-build-plan bcs-approve-plan bcs-execute-batch bcs-job-status bcs-rollback-batch bcs-audit-log"
+# 11 tool individual custom server (nama dash — bukan bcs/* dan bukan meta-tool).
+BCS_EXPECTED_TOOLS="bcs-parse-source bcs-check-duplicates bcs-build-plan bcs-approve-plan bcs-execute-batch bcs-job-status bcs-rollback-batch bcs-audit-log bcs-sync-list-connections bcs-sync-run bcs-sync-approve-run"
 
 # ---------------------------------------------------------------------------
 # Logging & hasil PASS/FAIL/STOP (JSON Lines di stdout + file)

@@ -7,9 +7,9 @@ Legend: ✅ terverifikasi · ⚠️ terverifikasi dengan catatan/deviasi terdoku
 
 ---
 
-## §1 Ability-by-ability (8 ability)
+## §1 Ability-by-ability (11 ability)
 
-Registrasi: `includes/class-bcs-abilities.php` — kategori `bcs` via `wp_abilities_api_categories_init` (`bulk-catalog-studio.php:111`, registrar `class-bcs-abilities.php:28`), 8 ability via `wp_abilities_api_init` (`bulk-catalog-studio.php:112`, definisi `:71–163`). Meta standar: `show_in_rest=true`, `mcp.public=true`, `mcp.type='tool'` (`:168–186`). Re-check capability + rate limit di dalam setiap `execute_callback` (`server_guard` `:230`).
+Registrasi: `includes/class-bcs-abilities.php` — kategori `bcs` via `wp_abilities_api_categories_init` (`bulk-catalog-studio.php:111`, registrar `class-bcs-abilities.php:28`), 11 ability via `wp_abilities_api_init` (`bulk-catalog-studio.php:112`, definisi `:71–252`). Meta standar: `show_in_rest=true`, `mcp.public=true`, `mcp.type='tool'`. Re-check capability + rate limit di dalam setiap `execute_callback` (`server_guard`).
 
 | Ability | Input schema strict | Output schema | Permission (callback + re-check) | Status | Bukti |
 |---|---|---|---|---|---|
@@ -21,6 +21,9 @@ Registrasi: `includes/class-bcs-abilities.php` — kategori `bcs` via `wp_abilit
 | `bcs/job-status` | ✅ job_id opsional, required `[]` | ✅ jobs[] + stale flag | ✅ `edit_products` (`:724`) | ✅ | Uji T12: detail + list 20 |
 | `bcs/rollback-batch` | ✅ job_id + confirm const true + scope | ✅ counts trashed/restored/variations/failed + note | ✅ `manage_woocommerce` (`:788`) | ✅ | Uji T14: 28 trashed, terminal, confirm ditolak |
 | `bcs/audit-log` | ✅ job_id + level/limit/offset | ✅ total + entries[] sesuai kolom audit | ✅ `edit_products` (`:815`) | ✅ | Uji T12: 40 entri row (28 create + 10 variasi + 2 skip) |
+| `bcs/sync-list-connections` | ✅ strict empty object | ✅ connections + latest summary + pending counts | ✅ `manage_woocommerce` + rate guard | ✅ | Sync MCP harness: schema and callback contract |
+| `bcs/sync-run` | ✅ connection_id + reason enum | ✅ run state/status, diff, summary, quarantine | ✅ `manage_woocommerce` + rate guard | ✅ | Sync MCP harness: lock_busy and runner path |
+| `bcs/sync-approve-run` | ✅ run_id + diff_hash + one-time token | ✅ approved run metadata | ✅ `manage_woocommerce` + rate guard | ✅ | Sync MCP harness: token, hash binding, replay rejection |
 
 Catatan gotcha riset (abilities-mcp-api.md): hook `wp_abilities_api_init` (bukan `abilities_api_init`) ✅; kategori didaftarkan dulu ✅; guard `function_exists('wp_register_ability')` ✅; idempotent-guard `wp_has_ability` ✅ (`:49`).
 
@@ -67,7 +70,7 @@ Catatan gotcha riset (abilities-mcp-api.md): hook `wp_abilities_api_init` (bukan
 | Poin | Status | Lokasi |
 |---|---|---|
 | §5.1 User khusus + role minimal (dokumentasi di README) | ✅ (dokumen; pembuatan user bukan ranah plugin) | `README.md` §2 |
-| §5.2 Capability mapping: 5 read=`edit_products`, 3 write=`manage_woocommerce` | ✅ | tabel §1 di atas |
+| §5.2 Capability mapping: 5 batch read=`edit_products`, 3 batch write=`manage_woocommerce`; 3 Sync abilities=`manage_woocommerce` | ✅ | tabel §1 di atas |
 | §5.3 Rate limit 60/menit sliding window transient | ✅ (fixed-window bucket 60 dtk — approximasi sliding, terdokumentasi) | `class-bcs-abilities.php:242–256` (uji T17: call ke-61 ditolak) |
 | §5.3 Batas: 100 baris/job (hard 500), inline 2MB, attachment 10MB, variasi 100/produk | ✅ | `class-bcs-csv-parser.php:152–179` (uji 600 baris ditolak), `class-bcs-settings.php` |
 | §5.4 row_key = sha1(source_hash|row_index|lower(trim(sku))) | ✅ | `class-bcs-csv-parser.php:872–878` (uji case/trim insensitive) |
@@ -173,7 +176,7 @@ Konteks: endpoint default `/wp-json/mcp/mcp-adapter-default-server` di server ta
 | 1. Hook `mcp_adapter_init` → `create_server()` sesuai riset §3.3 | `BCS_MCP_Server::init()` mendaftar hook; `register_server()` memanggil `$adapter->create_server(...)` 13 parameter | `includes/class-bcs-mcp-server.php:init/register_server` | ✅ uji G1–G2 (fake adapter merekam 1 panggilan) |
 | 2. ID/namespace/route/nama/versi | `bcs-mcp-server` / `bcs-mcp` / `mcp` / `Bulk Catalog Studio MCP` / `BCS_VERSION` | helper terpusat `server_id/rest_namespace/route/server_name/server_version` | ✅ uji G2 |
 | 3. Transport + handler | Hanya `\WP\MCP\Transport\HttpTransport`, `ErrorLogMcpErrorHandler`, `NullMcpObservabilityHandler` | `transport_class/error_handler_class/observability_handler_class` | ✅ uji G3 |
-| 4. Tepat 8 ability sebagai tool individual | Daftar terpusat `ability_names()` (sinkron `BCS_Schemas::ability_names()`); di custom server muncul individual di `tools/list` (riset §3.1) | `ability_names()` | ✅ uji G4 (urutan + sinkron schemas) |
+| 4. Tepat 11 ability sebagai tool individual | Daftar terpusat `ability_names()` (sinkron `BCS_Schemas::ability_names()`); di custom server muncul individual di `tools/list` (riset §3.1) | `ability_names()` | ✅ uji G4 (urutan + sinkron schemas) |
 | 5. Parameter ke-13 `current_user_can('manage_woocommerce')` | Anonim tanpa return-type (PHP 7.4 aman), diuji dua arah capability | `transport_permission_callback()` | ✅ uji G5 (true/false) |
 | 6. Guard class adapter/transport/handler; admin notice non-fatal | `dependencies_met()` cek 4 class; gagal → `register_server` return false, `create_server` tak dipanggil; pemeriksaan `admin_init` memastikan notice tetap terpicu saat hook adapter tidak ada; notice hanya untuk `activate_plugins`, tanpa fatal | `dependencies_met/admin_notice_missing_dependency` | ✅ uji G8 + subprocess `tests/test-bcs-mcp-missing-deps.php` (M1: tanpa class `WP\MCP\*` → tanpa fatal, notice muncul utk admin saja) |
 | 7. Header `Requires Plugins: woocommerce, mcp-adapter` | Header bootstrap diperbarui | `bulk-catalog-studio.php:9` | ✅ uji G7 statis |
@@ -182,7 +185,22 @@ Konteks: endpoint default `/wp-json/mcp/mcp-adapter-default-server` di server ta
 
 Catatan perilaku (sesuai riset abilities-mcp-api.md §3):
 - Pada custom server, ability TIDAK butuh `meta.mcp.public` untuk tampil (diekspos eksplisit), tetapi flag tetap dipertahankan agar ability juga terlihat di default server bila route itu dipakai.
-- Guard tambahan: bila 8 ability belum terdaftar di registry saat `mcp_adapter_init` menembak, registrasi dilewati + notice (registrasi manual di luar hook `wp_abilities_api_init` ditolak core — riset gotcha #1).
+- Guard tambahan: bila 11 ability belum terdaftar di registry saat `mcp_adapter_init` menembak, registrasi dilewati + notice (registrasi manual di luar hook `wp_abilities_api_init` ditolak core — riset gotcha #1).
 - `admin_notices` hook didaftarkan sejak `init()`; notice hanya render bila flag dependency-missing terisi (teruji tidak muncul saat dependency lengkap — uji G6).
 
 Hasil verifikasi Gate 3 (lokal, tanpa VPS): `php -l` 21 file PHP lulus (17 plugin + 4 harness) · harness parser 33 PASS · harness integrasi 134 PASS / 0 FAIL · harness MCP server 26 PASS (termasuk subprocess missing-deps 7 assertion PASS).
+
+## §12 Verifikasi fase 5–7 BCS Sync
+
+| Area | Status | Bukti |
+|---|---|---|
+| 3 ability Sync ditambahkan setelah 8 ability batch | ✅ | `class-bcs-schemas.php`, `class-bcs-abilities.php`, `test-bcs-sync-mcp.php` |
+| Run lock, threshold approval, stale resume, and audit actor | ✅ | `class-bcs-sync-runner.php`, `test-bcs-sync.php` |
+| Approval token BCS-XXXXXXXX, hash-only, expiry, diff binding, atomic single-use | ✅ | kolom DB `1.2.0`, runner token methods, Sync MCP harness |
+| Admin Sync submenu with Connections, Runs, Quarantine, Conflicts | ✅ | `admin/class-bcs-sync-admin.php`; four-tab render smoke |
+| Connection CRUD, nonces, encrypted credential storage | ✅ | `class-bcs-sync-connection.php`; existing encryption harness |
+| Quarantine apply/discard and conflict Sheet wins/Keep WP version actions | ✅ | runner resolution methods (Sheet wins reapplies the persisted conflict payload; Keep WP records the current payload hash) and admin nonces |
+| Live WordPress/WooCommerce/MCP deployment | ⚠️ belum dijalankan | deployment explicitly prohibited for this worktree |
+| `sheets_api` production fetcher | ⚠️ reserved | only `csv_export` is operational in this build; factory returns a clear `fetcher_not_implemented` error |
+
+Fase 5–7 local verification: `php tests/test-bcs-sync-mcp.php`, `php tests/test-bcs-sync.php`, `php tests/test-bcs-integration.php`, `php tests/test-bcs-mcp-server.php`, `php tests/test-bcs-mcp-missing-deps.php`, `php -l` seluruh PHP plugin/harness, dan `bash -n tests/e2e/*.sh` lulus. PHPCS WordPress untuk file admin Sync lulus. Catatan eksplisit: scan tujuh file core/admin legacy yang disentuh masih menghasilkan 150 error dan 250 warning pada working tree (sebagian besar sniff baseline dan alignment/array-style lama; baseline runner sebelum fase ini juga 30 error/53 warning). Ini sengaja tidak di-auto-format agar tidak mengubah area legacy di luar fase 5–7; lint gate untuk file baru `admin/class-bcs-sync-admin.php` tetap 0/0.

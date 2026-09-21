@@ -4,14 +4,14 @@
 #
 # 1) initialize → tangkap Mcp-Session-Id + body response:
 #    serverInfo.name HARUS "Bulk Catalog Studio MCP".
-# 2) tools/list (dengan header session) → HARUS tepat 8 tool individual:
-#    bcs-parse-source, bcs-check-duplicates, bcs-build-plan, bcs-approve-plan,
-#    bcs-execute-batch, bcs-job-status, bcs-rollback-batch, bcs-audit-log.
+# 2) tools/list (dengan header session) → HARUS tepat 11 tool individual:
+#    8 tool batch lama + bcs-sync-list-connections, bcs-sync-run,
+#    bcs-sync-approve-run.
 # 3) NEGATIF: meta-tool mcp-adapter-discover-abilities / mcp-adapter-execute-ability
 #    TIDAK boleh ada di custom server.
 #
 # READ-ONLY: tidak ada tool write yang dipanggil.
-# ABORT: serverInfo.name salah, jumlah tool ≠ 8, nama tool tidak lengkap, atau
+# ABORT: serverInfo.name salah, jumlah tool ≠ 11, nama tool tidak lengkap, atau
 # meta-tool adapter ditemukan → STOP (exit 2), JANGAN lanjut happy path.
 # =============================================================================
 export BCS_SCRIPT_NAME="01-smoke"
@@ -40,7 +40,9 @@ else
 	bcs_stop "server-info" "serverInfo.name = '${server_name:-?}' (expected '$BCS_MCP_SERVER_NAME') — wrong endpoint or not the BCS custom server"
 fi
 
-# --- 2. tools/list → tepat 8 tool individual --------------------------------
+# --- 2. tools/list → tepat 11 tool individual -------------------------------
+# Keep this smoke test self-contained even when an older lib.sh is sourced.
+BCS_EXPECTED_TOOLS="bcs-parse-source bcs-check-duplicates bcs-build-plan bcs-approve-plan bcs-execute-batch bcs-job-status bcs-rollback-batch bcs-audit-log bcs-sync-list-connections bcs-sync-run bcs-sync-approve-run"
 resp_tools="$(bcs_rpc tools/list '{}')" || true
 if [ -z "${resp_tools:-}" ] || ! printf '%s' "$resp_tools" | jq -e '.result' >/dev/null 2>&1; then
 	bcs_stop "tools-list" "tools/list failed — check the session header and endpoint"
@@ -51,19 +53,19 @@ tool_total="$(printf '%s' "$resp_tools" | jq -r '[.result.tools[]?.name] | lengt
 tool_names="$(printf '%s' "$resp_tools" | jq -r '.result.tools[]?.name' 2>/dev/null | sort | tr '\n' ' ' || true)"
 bcs_info "tools-list" "tool total = $tool_total: $tool_names"
 
-if [ "$tool_total" -eq 8 ] 2>/dev/null; then
-	bcs_pass "tools-count" "tools/list returns exactly 8 individual tools"
+if [ "$tool_total" -eq 11 ] 2>/dev/null; then
+	bcs_pass "tools-count" "tools/list returns exactly 11 individual tools"
 else
-	bcs_stop "tools-count" "tool total = $tool_total (expected 8) — STOP; do not continue to execution"
+	bcs_stop "tools-count" "tool total = $tool_total (expected 11) — STOP; do not continue to execution"
 fi
 
-# Kelengkapan nama — semua 8 tool individual wajib ada.
+# Kelengkapan nama — semua 11 tool individual wajib ada.
 missing=""
 for t in $BCS_EXPECTED_TOOLS; do
 	printf '%s' "$tool_names" | grep -qw "$t" || missing="$missing $t"
 done
 if [ -z "$missing" ]; then
-	bcs_pass "tools-names" "all 8 individual tool names are present"
+	bcs_pass "tools-names" "all 11 individual tool names are present"
 else
 	bcs_stop "tools-names" "missing tools:$missing"
 fi

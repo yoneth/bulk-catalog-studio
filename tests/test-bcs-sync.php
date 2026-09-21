@@ -58,6 +58,8 @@ function get_current_user_id() { return 1; }
 function is_admin() { return false; }
 function mysql2date( $format, $mysql, $translate = true ) { return (string) $mysql; }
 function wp_rand( $min = 0, $max = 0 ) { return rand( $min, $max ); }
+function wp_hash_password( $value ) { return 'H$' . md5( (string) $value ); }
+function wp_check_password( $value, $hash, $user_id = 0 ) { return hash_equals( (string) $hash, wp_hash_password( $value ) ); }
 
 class Fake_Sync_WPDB {
 	public $prefix = 'wp_';
@@ -286,10 +288,11 @@ $run_insert = $GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_i
 $run_id = $GLOBALS['wpdb']->insert_id;
 expect_sync( 'valid runner transition succeeds', true === BCS_Sync_Runner::transition( $run_id, 'pending', 'fetching' ) );
 expect_sync( 'invalid runner transition is rejected', is_wp_error( BCS_Sync_Runner::transition( $run_id, 'pending', 'done' ) ) );
-$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 777, 'trigger' => 'manual', 'state' => 'awaiting_approval', 'diff_hash' => sha1( 'approved-diff' ), 'diff_summary' => wp_json_encode( array( 'summary' => array(), 'operations' => array() ) ), 'started_at' => gmdate( 'Y-m-d H:i:s' ) ) );
+$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 777, 'trigger' => 'manual', 'state' => 'awaiting_approval', 'diff_hash' => sha1( 'approved-diff' ), 'diff_summary' => wp_json_encode( array( 'summary' => array(), 'operations' => array() ) ), 'token_hash' => null, 'token_expires_at' => null, 'token_used_at' => null, 'approved_by' => null, 'approved_at' => null, 'started_at' => gmdate( 'Y-m-d H:i:s' ) ) );
 $approval_run_id = $GLOBALS['wpdb']->insert_id;
 expect_sync( 'approval rejects a mismatched diff hash', is_wp_error( BCS_Sync_Runner::approve_run( $approval_run_id, sha1( 'other-diff' ) ) ) );
-$approved = BCS_Sync_Runner::approve_run( $approval_run_id, sha1( 'approved-diff' ) );
+$approval_token = BCS_Sync_Runner::generate_run_token( $approval_run_id );
+$approved = BCS_Sync_Runner::approve_run( $approval_run_id, sha1( 'approved-diff' ), $approval_token, get_current_user_id() );
 expect_sync( 'approval transitions awaiting_approval to approved', ! is_wp_error( $approved ) && 'approved' === $approved['state'] );
 $GLOBALS['wpdb']->lock_result = 0;
 $busy = BCS_Sync_Runner::run( 7, 'manual' );

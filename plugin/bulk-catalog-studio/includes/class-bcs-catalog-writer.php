@@ -421,6 +421,22 @@ class BCS_Catalog_Writer {
 	}
 
 	/**
+	 * Clear a conflict flag without changing any source-owned catalog field.
+	 *
+	 * @param int $object_id Product or variation ID.
+	 * @return true|WP_Error
+	 */
+	public static function clear_sync_conflict( $object_id ) {
+		$object = wc_get_product( absint( $object_id ) );
+		if ( ! $object instanceof WC_Product ) {
+			return new WP_Error( 'bcs_not_found', __( 'Product not found while clearing the sync conflict.', 'bulk-catalog-studio' ) );
+		}
+		$object->update_meta_data( '_bcs_conflict_flag', '' );
+		$object->save();
+		return true;
+	}
+
+	/**
 	 * Read a variation scalar snapshot for rollback/audit.
 	 *
 	 * @param WC_Product_Variation $variation Variation object.

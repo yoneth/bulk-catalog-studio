@@ -8,7 +8,7 @@ products**, through a 6-gate pipeline with mandatory human approval:
 parse → duplicate-check → build-plan → HUMAN APPROVAL (one-time token) → execute → (optional) rollback
 ```
 
-The plugin registers 8 `bcs/*` abilities via the **WordPress Abilities API**
+The plugin registers 11 `bcs/*` abilities via the **WordPress Abilities API**
 (`wp_register_ability`, hook `wp_abilities_api_init`) and exposes them through
 its **own custom MCP server** (`bcs-mcp-server`, endpoint
 `/wp-json/bcs-mcp/mcp`) created via `mcp_adapter_init` + `create_server()`
@@ -16,10 +16,11 @@ its **own custom MCP server** (`bcs-mcp-server`, endpoint
 `/wp-json/mcp/mcp-adapter-default-server` **is NOT used** — on the target
 server that route is intercepted by Novamira (`serverInfo: Novamira (legacy alias)`).
 
-On this custom server the 8 abilities appear as **individual tools** in
+On this custom server the 11 abilities appear as **individual tools** in
 `tools/list` (`bcs-parse-source`, `bcs-check-duplicates`, `bcs-build-plan`,
 `bcs-approve-plan`, `bcs-execute-batch`, `bcs-job-status`, `bcs-rollback-batch`,
-`bcs-audit-log`) — not only via meta-tools discovery.
+`bcs-audit-log`, `bcs-sync-list-connections`, `bcs-sync-run`,
+`bcs-sync-approve-run`) — not only via meta-tools discovery.
 
 Products are written 100% through `WC_Product` / `WC_Product_Variable` /
 `WC_Product_Variation` CRUD (`WC_Product_Variable::sync()` after variations) —
@@ -34,9 +35,11 @@ the regular WooCommerce admin, even with this plugin deactivated.
 2. Prerequisites: WordPress ≥ 6.9, PHP ≥ 7.4, WooCommerce active, MCP Adapter
    active (the `/wp-json/mcp/mcp-adapter-default-server` endpoint responds 401
    without auth).
-3. Activate the plugin → the `bcs_jobs`, `bcs_plans`, `bcs_audit` tables are
-   created automatically (dbDelta) along with the `bcs_settings` option.
-4. Admin page: **Bulk Catalog** (menu `admin.php?page=bcs-jobs`).
+3. Activate the plugin → the `bcs_jobs`, `bcs_plans`, `bcs_audit`,
+   `bcs_connections`, and `bcs_sync_runs` tables are created or upgraded
+   automatically (dbDelta) along with the `bcs_settings` option.
+4. Admin pages: **Bulk Catalog** (menu `admin.php?page=bcs-jobs`) and
+   **Bulk Catalog → Sync** (menu `admin.php?page=bcs-sync`).
 
 ## 2. Connect Claude (MCP)
 
@@ -79,8 +82,8 @@ Notes:
 | `WP_API_PASSWORD` | Application Password (not the account password, not a WooCommerce REST key). |
 | Transport permission | The custom server requires `manage_woocommerce` at the transport level (13th parameter of `create_server`), plus a per-ability capability re-check. |
 
-Because this endpoint is a **custom server**, all 8 BCS tools appear directly in
-`tools/list` (`bcs-parse-source`, … `bcs-audit-log`) — no need for the
+Because this endpoint is a **custom server**, all 11 BCS tools appear directly in
+`tools/list` (`bcs-parse-source`, … `bcs-sync-approve-run`) — no need for the
 `mcp-adapter-discover-abilities` meta-tool used by the default server. The
 default `mcp-adapter-default-server` would still expose the BCS abilities (via
 `meta.mcp.public`) if that route were used, but the supported and tested path
@@ -114,7 +117,30 @@ size×color ≈ 60 variations, 2 duplicate SKUs) and
    `scope: all|created_only|updated_only`. New products → trashed (soft) along
    with their variations; updated products → restored to the `before` snapshot.
 
-## 4. CSV format
+## 4. Sync administration
+
+The Sync screen (`admin.php?page=bcs-sync`) has four tabs:
+
+- **Connections** — add, edit, pause/resume, run active connections, test, or
+  delete paused connections. Connection tests fetch and parse only; they never
+  write catalog data.
+- **Runs** — inspect state, diff hash, summary, duration, errors, and threshold
+  approval. Generate an approval token here; the plaintext token is shown once.
+- **Quarantine** — review field-level or ownership holds and choose **Apply
+  anyway** or **Discard**. Both actions require `manage_woocommerce` and a nonce.
+- **Conflicts** — resolve a manual WooCommerce edit with **Sheet wins** (reapply
+  the persisted source payload) or **Keep WP version** (record the current WP
+  payload hash). Each resolution is audited.
+
+The Sync MCP tools are `bcs/sync-list-connections` (read status),
+`bcs/sync-run` (run one locked connection), and `bcs/sync-approve-run`
+(approve an `awaiting_approval` run with its one-time `BCS-XXXXXXXX` token and
+matching `diff_hash`). A run never bypasses its fetch, diff, quarantine,
+conflict, or threshold guards. The operational fetcher in this build is
+`csv_export`; `sheets_api` is reserved and returns a clear not-implemented error
+until its production credentials flow is shipped.
+
+## 5. CSV format
 
 - Delimiters: comma, semicolon, or `tab`.
 - The first row is usually a header; mapping via `column_mapping`
@@ -138,7 +164,7 @@ size×color ≈ 60 variations, 2 duplicate SKUs) and
 - Limits: 500 rows/job hard limit, 100 rows default setting; 2 MB inline;
   10 MB attachment.
 
-## 5. V1 limits (gate1 decisions — `docs/spec/gate1-decisions.md` + QA-1 rework)
+## 6. V1 limits (gate1 decisions — `docs/spec/gate1-decisions.md` + QA-1 rework)
 
 1. Google Sheets: only **public** CSV export URLs (no OAuth), and **only from
    the `docs.google.com` host** (SSRF guard from the QA-1 rework — other hosts
@@ -164,7 +190,7 @@ size×color ≈ 60 variations, 2 duplicate SKUs) and
    the mcp-adapter plugin is not active, the custom server is not created (admin
    notice, no fatal) and no BCS MCP route is active.
 
-## 6. Security
+## 7. Security
 
 - All ability inputs are strict: `additionalProperties: false`.
 - Per-ability `permission_callback` + re-check inside the `execute_callback`
@@ -179,7 +205,7 @@ size×color ≈ 60 variations, 2 duplicate SKUs) and
 - Deactivation removes nothing; uninstall only drops the `bcs_*` tables +
   `bcs_*` options/transients.
 
-## 7. Code structure
+## 8. Code structure
 
 ```
 bulk-catalog-studio.php          bootstrap + activation hooks + ability registration
@@ -189,7 +215,7 @@ README.md                        this document
 includes/
   class-bcs-install.php          dbDelta 3 tables (spec §3)
   class-bcs-settings.php         defaults + settings helpers
-  class-bcs-schemas.php          input/output JSON Schema for the 8 abilities
+  class-bcs-schemas.php          input/output JSON Schema for the 11 abilities
   class-bcs-abilities.php        ability registrar + execute callbacks
   class-bcs-csv-parser.php       CSV parser + normalizer
   class-bcs-duplicate-checker.php intra-batch + vs-catalog duplicates
@@ -201,8 +227,11 @@ includes/
   class-bcs-job-manager.php      state machine + job CRUD
   class-bcs-audit-logger.php     call/row audit
   class-bcs-mcp-server.php       custom MCP server /wp-json/bcs-mcp/mcp (Gate 3)
+  class-bcs-sync-connection.php  sync connection CRUD + encrypted credentials
+  class-bcs-sync-runner.php      guarded sync runs, approval, quarantine, conflicts
 admin/
   class-bcs-admin.php            admin pages: jobs, diff preview, token, audit
+  class-bcs-sync-admin.php       Sync connections, runs, quarantine, conflicts
 tests/fixtures/
   sample-fashion-30.csv          30-row fixture (20 simple + 10 variable)
   sample-prompt-rows.json        example inline rows from Claude

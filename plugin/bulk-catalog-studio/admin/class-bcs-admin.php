@@ -32,6 +32,9 @@ class BCS_Admin {
 	 */
 	public static function init() {
 		add_action( 'admin_menu', array( __CLASS__, 'register_menu' ) );
+		if ( class_exists( 'BCS_Sync_Admin' ) ) {
+			BCS_Sync_Admin::init();
+		}
 	}
 
 	/**
@@ -49,6 +52,17 @@ class BCS_Admin {
 			'dashicons-products',
 			56
 		);
+
+		if ( function_exists( 'add_submenu_page' ) && class_exists( 'BCS_Sync_Admin' ) ) {
+			add_submenu_page(
+				self::PAGE_SLUG,
+				__( 'Sync', 'bulk-catalog-studio' ),
+				__( 'Sync', 'bulk-catalog-studio' ),
+				'edit_products',
+				BCS_Sync_Admin::PAGE_SLUG,
+				array( 'BCS_Sync_Admin', 'render' )
+			);
+		}
 	}
 
 	/**
@@ -87,6 +101,17 @@ class BCS_Admin {
 
 	/**
 	 * Render utama.
+	 *
+	 * @return void
+	 */
+	public static function render_sync() {
+		if ( class_exists( 'BCS_Sync_Admin' ) ) {
+			BCS_Sync_Admin::render();
+		}
+	}
+
+	/**
+	 * Render the main batch page.
 	 *
 	 * @return void
 	 */
@@ -868,4 +893,9 @@ class BCS_Admin {
 		.bcs-wrap .bcs-detail { font-size:12px; color:#444; }
 		</style>';
 	}
+}
+
+// Load the sync screen when this admin class is used directly by a harness.
+if ( file_exists( __DIR__ . '/class-bcs-sync-admin.php' ) ) {
+	require_once __DIR__ . '/class-bcs-sync-admin.php';
 }

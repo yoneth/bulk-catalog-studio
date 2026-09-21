@@ -1,7 +1,7 @@
 <?php
 /**
  * Harness uji Gate 3 — custom MCP server BCS (stub adapter + transport/handler).
- * Memverifikasi: daftar 8 ability server, endpoint namespace/route, transport
+ * Memverifikasi: daftar 11 ability server, endpoint namespace/route, transport
  * capability (parameter ke-13), versi, dan header Requires Plugins.
  * Bukan bagian plugin — hanya untuk verifikasi self-check.
  */
@@ -94,7 +94,7 @@ namespace {
 	expect( 'G3 error handler ErrorLogMcpErrorHandler', \WP\MCP\Infrastructure\ErrorHandling\ErrorLogMcpErrorHandler::class === $call[7] );
 	expect( 'G3 observability NullMcpObservabilityHandler', \WP\MCP\Infrastructure\Observability\NullMcpObservabilityHandler::class === $call[8] );
 
-	/* G4: tepat 8 ability BCS, urutan sama dengan registrar */
+	/* G4: tepat 11 ability BCS, urutan sama dengan registrar */
 	$expected = array(
 		'bcs/parse-source',
 		'bcs/check-duplicates',
@@ -104,8 +104,11 @@ namespace {
 		'bcs/job-status',
 		'bcs/rollback-batch',
 		'bcs/audit-log',
+		'bcs/sync-list-connections',
+		'bcs/sync-run',
+		'bcs/sync-approve-run',
 	);
-	expect( 'G4 exactly 8 abilities are exposed', 8 === count( $call[9] ) );
+	expect( 'G4 exactly 11 abilities are exposed', 11 === count( $call[9] ) );
 	expect( 'G4 ability list matches exactly (including order)', $expected === $call[9] );
 	expect( 'G4 ability list matches BCS_Schemas', BCS_Schemas::ability_names() === $call[9] );
 	expect( 'G4 resources and prompts are empty', array() === $call[10] && array() === $call[11] );
