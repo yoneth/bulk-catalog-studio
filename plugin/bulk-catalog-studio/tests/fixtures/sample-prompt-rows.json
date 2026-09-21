@@ -1,0 +1,74 @@
+{
+  "_comment": "Contoh rows inline yang disusun Claude dari prompt manusia (tanpa file CSV). Alur pakai: Claude menyusun rows kanonik seperti di bawah, lalu mengirimkannya ke bcs/parse-source sebagai source_type=inline_csv dengan csv_text berformat CSV (header = nama field kanonik atau header Indonesia + column_mapping). Struktur file ini HANYA referensi untuk Claude — bukan payload MCP langsung.",
+  "_usage_hint": "Untuk mengirim sebagai inline_csv, serialize array 'rows' menjadi CSV dengan kolom persis 'csv_headers' di bawah, lalu panggil bcs/parse-source dengan {\"source_type\":\"inline_csv\",\"csv_text\":\"...\",\"header_row\":true,\"column_mapping\":{}} (header kanonik terdeteksi otomatis tanpa mapping).",
+  "csv_headers": [
+    "name",
+    "description",
+    "short_description",
+    "sku",
+    "regular_price",
+    "sale_price",
+    "stock_quantity",
+    "weight",
+    "dimensions.length",
+    "dimensions.width",
+    "dimensions.height",
+    "categories",
+    "tags",
+    "attribute:pa_ukuran",
+    "attribute:pa_warna",
+    "variation_sku",
+    "variation_regular_price",
+    "variation_stock_quantity",
+    "image_id",
+    "image_alt",
+    "seo_title",
+    "seo_description"
+  ],
+  "rows": [
+    {
+      "name": "Kaos Katun Premium Hitam",
+      "description": "<p>Kaos katun combed 30s, jahitan rantai, pre-shrunk. Nyaman untuk pemakaian harian.</p>",
+      "short_description": "Kaos katun combed 30s hitam, pre-shrunk.",
+      "sku": "KOS-KTN-HIT-001",
+      "regular_price": "89000",
+      "sale_price": null,
+      "stock_quantity": 40,
+      "weight": "0.20",
+      "dimensions": { "length": "28", "width": "21", "height": "2" },
+      "categories": ["Pria > Atasan"],
+      "tags": ["katun", "kaos"],
+      "attributes": [],
+      "variations": [],
+      "image_id": 4512,
+      "image_alt": "Kaos katun premium hitam",
+      "seo_title": "Kaos Katun Premium Hitam | Toko",
+      "seo_description": "Kaos katun combed 30s hitam, jahitan rantai, pre-shrunk."
+    },
+    {
+      "name": "Dress Linen Navy",
+      "description": "<p>Dress linen navy, adem, cocok untuk kasual dan semi-formal.</p>",
+      "short_description": "Dress linen navy S-M-L.",
+      "sku": "DRS-LIN-NVY-001",
+      "regular_price": "219000",
+      "sale_price": null,
+      "stock_quantity": 18,
+      "weight": "0.32",
+      "dimensions": { "length": "30", "width": "25", "height": "3" },
+      "categories": ["Wanita > Dress"],
+      "tags": ["linen", "navy"],
+      "attributes": [
+        { "name": "pa_ukuran", "options": ["S", "M", "L"], "variation": true, "visible": true }
+      ],
+      "variations": [
+        { "sku": "DRS-LIN-NVY-001-S", "attributes": { "pa_ukuran": "S" }, "regular_price": "219000", "stock_quantity": 6, "weight": "0.30" },
+        { "sku": "DRS-LIN-NVY-001-M", "attributes": { "pa_ukuran": "M" }, "regular_price": "219000", "stock_quantity": 7, "weight": "0.32" },
+        { "sku": "DRS-LIN-NVY-001-L", "attributes": { "pa_ukuran": "L" }, "regular_price": "224000", "stock_quantity": 5, "weight": "0.34" }
+      ],
+      "image_id": null,
+      "image_alt": "Dress linen navy",
+      "seo_title": "Dress Linen Navy | Toko",
+      "seo_description": "Dress linen navy adem, ukuran S-M-L."
+    }
+  ]
+}
