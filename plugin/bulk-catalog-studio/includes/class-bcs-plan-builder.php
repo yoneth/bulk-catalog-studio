@@ -208,12 +208,14 @@ class BCS_Plan_Builder {
 			return new WP_Error( 'bcs_not_found', __( 'Job tidak ditemukan.', 'bulk-catalog-studio' ) );
 		}
 
-		if ( 'parsed' !== $job['status'] ) {
+		// MINOR-2 (retur QA-1): rebuild plan diizinkan pada job 'planned' —
+		// belum ada produk tertulis; plan baru versi N+1 menggugurkan plan lama.
+		if ( ! in_array( $job['status'], array( 'parsed', 'planned' ), true ) ) {
 			return new WP_Error(
 				'bcs_invalid_state',
 				sprintf(
 					/* translators: %s: status job */
-					__( 'build-plan hanya boleh pada job berstatus parsed (status saat ini: %s).', 'bulk-catalog-studio' ),
+					__( 'build-plan hanya boleh pada job berstatus parsed atau planned (status saat ini: %s).', 'bulk-catalog-studio' ),
 					$job['status']
 				)
 			);
@@ -289,6 +291,20 @@ class BCS_Plan_Builder {
 			// Tentukan op: override > duplikat > create.
 			if ( isset( $overrides[ $row_index ] ) ) {
 				$op = $overrides[ $row_index ];
+
+				// NIT-4 (retur QA-1): override 'update' hanya valid untuk baris
+				// yang benar-benar cocok produk existing; selain itu tolak saat
+				// build agar tidak jatuh diam-diam ke create.
+				if ( 'update' === $op && ! $is_dup ) {
+					return new WP_Error(
+						'bcs_invalid_override',
+						sprintf(
+							/* translators: 1: nomor baris */
+							__( 'row_overrides op=update untuk baris %1$d ditolak: baris bukan duplikat produk existing.', 'bulk-catalog-studio' ),
+							$row_index
+						)
+					);
+				}
 			} elseif ( $is_dup || $is_intra ) {
 				$op = 'update' === $on_duplicate && $is_dup ? 'update' : 'skip';
 			} else {
@@ -326,7 +342,7 @@ class BCS_Plan_Builder {
 					'op'                => 'update_product',
 					'product_type'      => null,
 					'target_product_id' => $target,
-					'payload'           => self::build_payload( $row, $defaults, $policy, false ),
+					'payload'           => self::build_payload( $row, $defaults, $policy, false, true ),
 					'before'            => $before,
 					'duplicate_check'   => array(
 						'status'             => 'duplicate',
@@ -375,6 +391,22 @@ class BCS_Plan_Builder {
 			'operations'   => $operations,
 		);
 
+		// MINOR-2 (retur QA-1): gugurkan plan planned lama milik job ini
+		// (superseded) SEBELUM plan baru dibuat — agar token/approve lama
+		// tidak bisa dipakai lagi dan plan baru tidak ikut tergugurkan.
+		global $wpdb;
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- tabel kustom.
+		$wpdb->update(
+			$wpdb->prefix . 'bcs_plans',
+			array( 'status' => 'superseded' ),
+			array(
+				'job_id' => absint( $job_id ),
+				'status' => 'planned',
+			),
+			array( '%s' ),
+			array( '%d', '%s' )
+		);
+
 		// Persist.
 		$plan_id = self::persist_plan( $job_id, $plan_data );
 		if ( is_wp_error( $plan_id ) ) {
@@ -396,10 +428,15 @@ class BCS_Plan_Builder {
 			array( '%d' )
 		);
 
-		// Transisi job parsed → planned.
-		$transition = BCS_Job_Manager::transition( $job_id, 'planned', 'bcs/build-plan', array( 'active_plan_id' => $plan_id ) );
-		if ( is_wp_error( $transition ) ) {
-			return $transition;
+		if ( 'parsed' === $job['status'] ) {
+			// Transisi normal parsed → planned.
+			$transition = BCS_Job_Manager::transition( $job_id, 'planned', 'bcs/build-plan', array( 'active_plan_id' => $plan_id ) );
+			if ( is_wp_error( $transition ) ) {
+				return $transition;
+			}
+		} else {
+			// Rebuild pada job planned: cukup perbarui plan aktif.
+			BCS_Job_Manager::update_fields( $job_id, array( 'active_plan_id' => $plan_id ) );
 		}
 
 		return array(
@@ -449,13 +486,22 @@ class BCS_Plan_Builder {
 	/**
 	 * Bangun payload produk dari baris normalisasi (kontrak spec §3.3).
 	 *
+	 * BLOCKER-1 (retur QA-1): untuk operasi update, payload TIDAK membawa
+	 * `status` (defaults.status adalah "status produk BARU" — spec §1.3) dan
+	 * TIDAK membawa `stock_quantity` bila kolom stok kosong di baris (parser
+	 * men-default-nya 0 hanya untuk konteks create). Field yang tidak
+	 * dikirim sumber tidak boleh tersentuh.
+	 *
 	 * @param array $row         Baris kanonik.
 	 * @param array $defaults    Defaults.
 	 * @param array $policy      Image policy.
 	 * @param bool  $is_variable Variable?
+	 * @param bool  $for_update  True bila payload untuk op update_product.
 	 * @return array
 	 */
-	private static function build_payload( array $row, array $defaults, array $policy, $is_variable ) {
+	private static function build_payload( array $row, array $defaults, array $policy, $is_variable, $for_update = false ) {
+		$stock_explicit = ! empty( $row['stock_provided'] );
+
 		$payload = array(
 			'name'              => sanitize_text_field( $row['name'] ),
 			'description'       => self::sanitize_html( $row['description'] ),
@@ -463,10 +509,8 @@ class BCS_Plan_Builder {
 			'sku'               => sanitize_text_field( $row['sku'] ),
 			'regular_price'     => null !== $row['regular_price'] ? (string) $row['regular_price'] : null,
 			'sale_price'        => null !== $row['sale_price'] ? (string) $row['sale_price'] : null,
-			'status'            => $defaults['status'],
 			'catalog_visibility' => $defaults['catalog_visibility'],
 			'manage_stock'      => (bool) $defaults['manage_stock'],
-			'stock_quantity'    => (int) $row['stock_quantity'],
 			'tax_class'         => $defaults['tax_class'],
 			'weight'            => null !== $row['weight'] ? (string) $row['weight'] : null,
 			'dimensions'        => array(
@@ -481,6 +525,18 @@ class BCS_Plan_Builder {
 			'image'             => null,
 			'seo'               => null,
 		);
+
+		// Status hanya relevan untuk produk BARU (spec §1.3: defaults.status
+		// = "Status produk baru"); update tidak pernah mengubah status.
+		if ( ! $for_update ) {
+			$payload['status'] = $defaults['status'];
+		}
+
+		// Stok: bila kolom stok tidak dikirim di baris, jangan bawa nilai
+		// default 0 ke produk existing (parser men-default 0 hanya utk create).
+		if ( ! $for_update || $stock_explicit ) {
+			$payload['stock_quantity'] = (int) $row['stock_quantity'];
+		}
 
 		// Atribut + variasi hanya untuk variable.
 		if ( $is_variable ) {

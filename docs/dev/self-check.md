@@ -1,7 +1,7 @@
 # Self-Check: Bulk Catalog Studio (Fase B — developer scout)
 
-Tanggal: 21 September 2026 · Verifikator: Pi (developer scout)
-Metode: review statis per poin spec + **pengujian runtime di luar WordPress** (2 harness PHP dengan stub WP/WC — lihat §8) + `php -l` seluruh file (PHP CLI lokal 8.5 — parse-level, kode ditulis kompatibel PHP 7.4; tidak ada ssh ke VPS sama sekali).
+Tanggal: 21 September 2026 (diperbarui setelah retur QA-1) · Verifikator: Pi (developer scout)
+Metode: review statis per poin spec + **pengujian runtime di luar WordPress** (2 harness PHP dengan stub WP/WC — lihat §8) + `php -l` seluruh file (PHP CLI lokal 8.5 — parse-level, kode ditulis kompatibel PHP 7.4; tidak ada ssh ke VPS sama sekali). Bagian §10 = perbaikan retur QA-1.
 
 Legend: ✅ terverifikasi · ⚠️ terverifikasi dengan catatan/deviasi terdokumentasi · ❌ tidak terpenuhi
 
@@ -117,7 +117,7 @@ Catatan gotcha riset (abilities-mcp-api.md): hook `wp_abilities_api_init` (bukan
 Harness di `tests/` (di luar folder plugin): stub minimal WP (`WP_Error`, wpdb fake pattern-matcher, transients, hash) + stub WC (`WC_Product*`, `wc_get_product`, term, dsb).
 
 - `php tests/test-bcs-parser.php` → **33/33 PASS**: fixture 30/20/10/60, duplikat intra-batch 5&15, row_key stabil, 600 baris ditolak (AC-12), delimiter ;/tab, mapping Indonesia persis spec §4, harga `189.000`→189000 / `1.899,50`→1899.5 / `seribu`→warning, cartesian rightmost-fastest selaras urutan SKU variasi.
-- `php tests/test-bcs-integration.php` → **73/73 PASS**: alur penuh parse→dup-check→build-plan (18/10/60/2/30)→token→approve (salah/hash-beda/single-use ditolak)→execute (done, 28/60/2/0)→job-status→audit-log (40 row)→rollback (28 trashed, terminal), dry_run tanpa perubahan state, state machine guards (T5–T7, T13), rate limit (T17), schema strict (T16).
+- `php tests/test-bcs-integration.php` → **134 PASS / 0 FAIL** (72 test alur awal + 62 test regresi retur QA-1 — klaim lama "73/73" dikoreksi: sebelum retur aktualnya 72 PASS): alur penuh parse→dup-check→build-plan (18/10/60/2/30)→token→approve→execute (done, 28/60/2/0)→job-status→audit-log (40 row)→rollback (28 trashed, terminal), dry_run tanpa perubahan state, state machine guards, rate limit, schema strict, PLUS regresi QA-1 (R1–R10, lihat §10).
 - `php -l` → semua file plugin lulus; tidak ada sintaks PHP 8 (nullsafe, match, named args, enum, readonly, promotion sudah di-grep kosong).
 
 Bug nyata yang tertangkap & diperbaiki berkat harness: (a) dobel prefix `pa_pa-ukuran` akibat `sanitize_title` mengubah `_`→`-` pada nama taxonomy (3 titik: parser, plan-builder, writer); (b) urutan cartesian atribut tidak selaras urutan SKU variasi; (c) jumlah kombinasi harus mengikuti daftar `variation_sku` eksplisit bila ada; (d) harga ribuan gaya Indonesia `189.000`.
@@ -127,3 +127,62 @@ Bug nyata yang tertangkap & diperbaiki berkat harness: (a) dobel prefix `pa_pa-u
 - Eksekusi live terhadap WooCommerce nyata (AC-1/2/6 field-level, `WC_Product_Attribute` + term pairing, Yoast/Rank Math meta live).
 - Registrasi ability live di WP 7.1.1 + discover via MCP Adapter (butuh situs; deploy ranah orchestrator).
 - `dbDelta` di MySQL nyata (dibuat sesuai kaidah dbDelta: KEY, dua spasi PRIMARY KEY, satu field per baris).
+- Validasi validator Abilities API live terhadap `const` + `type: ["string","null"]` (NIT-3 QA) — Fase D.
+
+## §10 Perbaikan Retur QA-1 (semua BLOCKER + MAJOR + MINOR murah)
+
+Referensi laporan: `docs/review/qa-report.md`. Semua perubahan diverifikasi `php -l` + harness penuh (§8).
+
+| Temuan | Perbaikan | Lokasi | Status |
+|---|---|---|---|
+| **BLOCKER-1** update membawa `defaults.status=draft` + stok default 0 ke produk existing | `build_payload()` menerima `$for_update`: payload update TANPA key `status`, dan TANPA `stock_quantity` bila kolom stok kosong (flag baru `stock_provided` dari parser) | `class-bcs-plan-builder.php` (build_payload + op update), `class-bcs-csv-parser.php` (stock_provided) | ✅ uji R1: produk existing publish + stok 7 tidak berubah kecuali field dikirim |
+| **MAJOR-3** rollback lookup meta row_key bisa kollide lintas job | `find_created_product_id()` sumber primer = audit job ini (`find_row_product_id`), fallback meta + verifikasi `_bcs_job_id` | `class-bcs-rollback-service.php`, `class-bcs-audit-logger.php:find_row_product_id` | ✅ uji R2: dua job CSV identik — rollback job B hanya trash produk B, produk A aman |
+| **MAJOR-2** konsumsi token tidak atomik + urutan salah | `consume()` = `UPDATE … WHERE id=%d AND token_used_at IS NULL` (wajib affected===1); dipanggil SETELAH transisi job sukses (jalur MCP + admin admin sama) | `class-bcs-approval-token.php:consume`, `class-bcs-abilities.php:execute_approve_plan`, `admin/class-bcs-admin.php` | ✅ uji R3: consume kedua ditolak; dua approve "bersamaan" hanya satu pemenang |
+| **MAJOR-1** SSRF mode url | V1 kunci host ke `docs.google.com` (filter `bcs_allowed_source_hosts`), resolve host + blokir IP privat/loopback/link-local (IPv4 CIDR + IPv6 fc00/7, fe80/10), `redirection => 0`, wajib export=csv; dicatat di README batas V1 | `class-bcs-abilities.php` (`is_host_allowed`, `resolve_host_ip`, `is_ip_private`) | ✅ uji R4: whitelist/blokir IP/https/export guard + happy path docs.google.com |
+| MINOR-1 entropy token | 5 → 8 karakter (total 12, tetap dalam schema) | `class-bcs-approval-token.php:generate` | ✅ uji T9/R5 |
+| MINOR-2 tidak ada jalur rebuild plan | build-plan diizinkan pada job `planned`; plan planned lain otomatis `superseded` SEBELUM insert plan baru; approve-plan menolak plan non-`planned` | `class-bcs-plan-builder.php:build`, `class-bcs-abilities.php` | ✅ uji T5/R6 + R6b (approve plan superseded ditolak) |
+| MINOR-3 output approve gagal berupa WP_Error | DOKUMENTASI deviasi (pilihan reviewer): idiomatik MCP; tidak diubah kodenya | bagian deviasi di bawah | ✅ dokumen |
+| MINOR-4 resume double-count `skipped` | resume memakai `has_row_entry` (ok ATAU skipped) dan TIDAK menambah counter; entri failed tetap di-retry | `class-bcs-executor.php`, `class-bcs-audit-logger.php:has_row_entry` | ✅ uji R10: counter tetap 2/28/60 |
+| MINOR-5 `image_warning` dead code | pesan error disimpan ke `$image_warning` sebelum return | `class-bcs-catalog-writer.php:create_product` | ✅ uji R7 |
+| MINOR-6 redirect setelah output | proses POST dipindah ke awal `render()` sebelum satu pun output; token hasil generate diteruskan ke `render_plan()` | `admin/class-bcs-admin.php` | ✅ kode review + lint |
+| MINOR-7 encoding non-UTF-8 | deteksi `mb_check_encoding` + konversi Windows-1252/ISO-8859-1 → UTF-8 + warning | `class-bcs-csv-parser.php:maybe_convert_to_utf8` | ✅ uji R8 (Café Windows-1252) |
+| NIT-1 mime attachment | whitelist disempitkan (`.xls` biner dihapus): text/csv, text/plain, application/csv | `class-bcs-abilities.php` | ✅ + koreksi klaim §4 self-check |
+| NIT-4 override update pada non-dup | ditolak eksplisit saat build (`bcs_invalid_override`) | `class-bcs-plan-builder.php` | ✅ uji R9 |
+| NIT-5 `add_settings_error` tak tampil | error generate token → redirect `bcs_error` (sama dengan approve) | `admin/class-bcs-admin.php` | ✅ kode review |
+| NIT-6 label "Waktu (UTC)" | label menjadi "Waktu" (nilai ISO dari `mysql2date`) | `admin/class-bcs-admin.php` | ✅ |
+| NIT-7 kolom ability log generate token | `'wp_admin'` → `'bcs/admin-screen'` (actor_via tetap deteksi otomatis) | `admin/class-bcs-admin.php` | ✅ |
+| NIT-8 resume menghapus marker deferred | resume tidak lagi `last_error = NULL`; marker bertahan sampai finalisasi | `class-bcs-job-manager.php` | ✅ |
+| NIT-2 `plan_hash` = sha1(plan_id\|plan_json) | DOKUMENTASI deviasi (lebih kuat dari §3.3 — terikat baris plan) | daftar deviasi di bawah | ✅ dokumen |
+| NIT-5..8 lainnya | lihat baris di atas | — | ✅ |
+
+Deviasi tambahan yang terdokumentasi pasca-retur:
+11. **Approve gagal = WP_Error** (bukan field `note` §1.4) — idiomatik MCP error; kontrak `note` hanya dipakai bila failed > 0 pada output yang sukses.
+12. **`plan_hash` = sha1(plan_id + '|' + plan_json)** — lebih kuat dari §3.3: approval terikat baris plan spesifik.
+13. **Status plan `superseded`** — nilai tambahan untuk hasil rebuild (MINOR-2).
+
+### Koreksi klaim self-check (sesuai retur)
+- §8 lama: "73/73 PASS integrasi" → dikoreksi: sebelum retur aktualnya **72 PASS / 0 FAIL**; kini 134 PASS / 0 FAIL setelah regresi QA-1.
+- §4 lama: "attachment: post_type + mime text/csv" → dikoreksi: whitelist mime adalah text/csv, text/plain, application/csv (.xls biner dihapus pada retur ini).
+
+## §11 Custom MCP server Gate 3 (nol ketergantungan route Novamira)
+
+Konteks: endpoint default `/wp-json/mcp/mcp-adapter-default-server` di server target ter-intercept Novamira (`serverInfo: Novamira (legacy alias)`). Plugin kini mendaftarkan MCP server sendiri sehingga endpoint utama menjadi `/wp-json/bcs-mcp/mcp`.
+
+| Poin Gate 3 | Implementasi | Lokasi | Status |
+|---|---|---|---|
+| 1. Hook `mcp_adapter_init` → `create_server()` sesuai riset §3.3 | `BCS_MCP_Server::init()` mendaftar hook; `register_server()` memanggil `$adapter->create_server(...)` 13 parameter | `includes/class-bcs-mcp-server.php:init/register_server` | ✅ uji G1–G2 (fake adapter merekam 1 panggilan) |
+| 2. ID/namespace/route/nama/versi | `bcs-mcp-server` / `bcs-mcp` / `mcp` / `Bulk Catalog Studio MCP` / `BCS_VERSION` | helper terpusat `server_id/rest_namespace/route/server_name/server_version` | ✅ uji G2 |
+| 3. Transport + handler | Hanya `\WP\MCP\Transport\HttpTransport`, `ErrorLogMcpErrorHandler`, `NullMcpObservabilityHandler` | `transport_class/error_handler_class/observability_handler_class` | ✅ uji G3 |
+| 4. Tepat 8 ability sebagai tool individual | Daftar terpusat `ability_names()` (sinkron `BCS_Schemas::ability_names()`); di custom server muncul individual di `tools/list` (riset §3.1) | `ability_names()` | ✅ uji G4 (urutan + sinkron schemas) |
+| 5. Parameter ke-13 `current_user_can('manage_woocommerce')` | Anonim tanpa return-type (PHP 7.4 aman), diuji dua arah capability | `transport_permission_callback()` | ✅ uji G5 (true/false) |
+| 6. Guard class adapter/transport/handler; admin notice non-fatal | `dependencies_met()` cek 4 class; gagal → `register_server` return false, `create_server` tak dipanggil; pemeriksaan `admin_init` memastikan notice tetap terpicu saat hook adapter tidak ada; notice hanya untuk `activate_plugins`, tanpa fatal | `dependencies_met/admin_notice_missing_dependency` | ✅ uji G8 + subprocess `tests/test-bcs-mcp-missing-deps.php` (M1: tanpa class `WP\MCP\*` → tanpa fatal, notice muncul utk admin saja) |
+| 7. Header `Requires Plugins: woocommerce, mcp-adapter` | Header bootstrap diperbarui | `bulk-catalog-studio.php:9` | ✅ uji G7 statis |
+| 8. README/readme.txt endpoint kustom | `WP_API_URL` → `https://<domain>/wp-json/bcs-mcp/mcp`; ditegaskan default `/wp-json/mcp/...` TIDAK dipakai (Novamira); tools individual di `tools/list` | `README.md` (intro + §2 + §5 poin 9 + §7), `readme.txt` (installation + proxy + changelog) | ✅ uji G7 |
+| 9. Test regresi ringan | Harness `tests/test-bcs-mcp-server.php` (26 asersi: konfigurasi create_server, endpoint, transport capability, notice, header, README) + subprocess missing-deps | `tests/test-bcs-mcp-server.php` + `tests/test-bcs-mcp-missing-deps.php` | ✅ 26 PASS + M1 7 assertion PASS |
+
+Catatan perilaku (sesuai riset abilities-mcp-api.md §3):
+- Pada custom server, ability TIDAK butuh `meta.mcp.public` untuk tampil (diekspos eksplisit), tetapi flag tetap dipertahankan agar ability juga terlihat di default server bila route itu dipakai.
+- Guard tambahan: bila 8 ability belum terdaftar di registry saat `mcp_adapter_init` menembak, registrasi dilewati + notice (registrasi manual di luar hook `wp_abilities_api_init` ditolak core — riset gotcha #1).
+- `admin_notices` hook didaftarkan sejak `init()`; notice hanya render bila flag dependency-missing terisi (teruji tidak muncul saat dependency lengkap — uji G6).
+
+Hasil verifikasi Gate 3 (lokal, tanpa VPS): `php -l` 21 file PHP lulus (17 plugin + 4 harness) · harness parser 33 PASS · harness integrasi 134 PASS / 0 FAIL · harness MCP server 26 PASS (termasuk subprocess missing-deps 7 assertion PASS).

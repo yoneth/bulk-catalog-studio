@@ -210,6 +210,66 @@ class BCS_Audit_Logger {
 	}
 
 	/**
+	 * Ambil product_id dari entri audit row sukses (job-scoped).
+	 *
+	 * MAJOR-3 (retur QA-1): sumber kebenaran rollback untuk "produk apa yang
+	 * dibuat oleh job INI pada row_key INI" adalah audit job itu sendiri —
+	 * bukan lookup meta row_key yang sengaja tanpa job_id (bisa kollide
+	 * lintas job bila CSV identik diproses ulang).
+	 *
+	 * @param int    $job_id  ID job.
+	 * @param string $row_key row_key sha1.
+	 * @param string $action  Aksi row (create_product).
+	 * @return int|null
+	 */
+	public static function find_row_product_id( $job_id, $row_key, $action = 'create_product' ) {
+		global $wpdb;
+
+		$table  = $wpdb->prefix . 'bcs_audit';
+		$digest = substr( preg_replace( '/[^a-f0-9]/i', '', (string) $row_key ), 0, 40 );
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- tabel kustom.
+		$found = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT product_id FROM {$table} WHERE job_id = %d AND level = 'row' AND payload_digest = %s AND action = %s AND status = 'ok' AND product_id IS NOT NULL ORDER BY id ASC LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- nama tabel dari prefix, nilai via prepare.
+				absint( $job_id ),
+				$digest,
+				sanitize_text_field( $action )
+			)
+		);
+
+		return $found ? (int) $found : null;
+	}
+
+	/**
+	 * Cek apakah ada entri row (status sukses/skip) untuk (job_id, row_key).
+	 * MINOR-4 (retur QA-1): dipakai resume agar baris yang sudah punya entri
+	 * (ok ATAU skipped) tidak dieksekusi/dihitung ulang; entri failed tetap
+	 * di-retry.
+	 *
+	 * @param int    $job_id  ID job.
+	 * @param string $row_key row_key sha1.
+	 * @return bool
+	 */
+	public static function has_row_entry( $job_id, $row_key ) {
+		global $wpdb;
+
+		$table  = $wpdb->prefix . 'bcs_audit';
+		$digest = substr( preg_replace( '/[^a-f0-9]/i', '', (string) $row_key ), 0, 40 );
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- tabel kustom.
+		$found = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT id FROM {$table} WHERE job_id = %d AND level = 'row' AND payload_digest = %s AND status IN ( 'ok', 'skipped' ) LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- nama tabel dari prefix, nilai via prepare.
+				absint( $job_id ),
+				$digest
+			)
+		);
+
+		return ! empty( $found );
+	}
+
+	/**
 	 * Cek apakah ada entri row sukses untuk (job_id, row_key) — idempotency §5.4.
 	 *
 	 * @param int    $job_id  ID job.

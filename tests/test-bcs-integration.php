@@ -52,6 +52,22 @@ function wp_trim_words( $t, $n = 55, $more = '…' ) { return $t; }
 function wp_strip_all_tags( $t ) { return trim( preg_replace( '/<[^>]*>/', '', (string) $t ) ); }
 function get_option( $name, $default = false ) { return $default; }
 function is_admin() { return false; }
+function wp_parse_url( $url, $component = -1 ) { return parse_url( $url, $component ); }
+function wp_http_validate_url( $url ) {
+	if ( ! is_string( $url ) || '' === $url ) { return false; }
+	$p = parse_url( $url );
+	if ( empty( $p['host'] ) || empty( $p['scheme'] ) ) { return false; }
+	return $url;
+}
+function wp_remote_get( $url, $args = array() ) {
+	// Stub HTTP: hanya untuk happy-path SSRF test (docs.google.com).
+	return array(
+		'response' => array( 'code' => 200, 'message' => 'OK' ),
+		'body'     => isset( $GLOBALS['bcs_http_stub_body'] ) ? $GLOBALS['bcs_http_stub_body'] : '',
+	);
+}
+function wp_remote_retrieve_response_code( $r ) { return isset( $r['response']['code'] ) ? (int) $r['response']['code'] : 0; }
+function wp_remote_retrieve_body( $r ) { return isset( $r['body'] ) ? (string) $r['body'] : ''; }
 function update_option( $name, $value, $autoload = null ) { return true; }
 function add_option( $name, $value, $d = '', $a = 'yes' ) { return true; }
 function delete_option( $name ) { return true; }
@@ -102,9 +118,31 @@ class Fake_WPDB {
 	}
 
 	private function parse_where( $where ) {
-		// "col = 'val'", "col = 5", "col != 5", "col > 0", joined by AND.
-		preg_match_all( "/(\w+)\s*(=|!=|>)\s*'?([^'\s]+)'?/", (string) $where, $m, PREG_SET_ORDER );
+		$where = (string) $where;
 		$conds = array();
+
+		// Kondisi IN ( 'a', 'b' ) — dipakai has_row_entry.
+		if ( preg_match_all( "/(\w+)\s+IN\s*\(([^)]*)\)/i", $where, $ins, PREG_SET_ORDER ) ) {
+			foreach ( $ins as $in ) {
+				$vals = array();
+				if ( preg_match_all( "/'([^']*)'/", $in[2], $vv ) ) {
+					$vals = $vv[1];
+				}
+				$conds[] = array( 'col' => $in[1], 'op' => 'IN', 'val' => $vals );
+				$where = str_replace( $in[0], '', $where );
+			}
+		}
+
+		// Kondisi "col IS NULL".
+		if ( preg_match_all( "/(\w+)\s+IS\s+NULL/i", $where, $nulls, PREG_SET_ORDER ) ) {
+			foreach ( $nulls as $n ) {
+				$conds[] = array( 'col' => $n[1], 'op' => 'ISNULL', 'val' => null );
+				$where = str_replace( $n[0], '', $where );
+			}
+		}
+
+		// "col = 'val'", "col = 5", "col != 5", "col > 0", joined by AND.
+		preg_match_all( "/(\w+)\s*(=|!=|>)\s*'?([^'\s]+)'?/", $where, $m, PREG_SET_ORDER );
 		foreach ( $m as $c ) {
 			$conds[] = array( 'col' => $c[1], 'op' => $c[2], 'val' => $c[3] );
 		}
@@ -120,6 +158,12 @@ class Fake_WPDB {
 				case '=':  if ( (string) $val !== (string) $cond_val && $val != $cond_val ) return false; break;
 				case '!=': if ( $val == $cond_val ) return false; break;
 				case '>':  if ( ! ( (float) $val > (float) $cond_val ) ) return false; break;
+				case 'IN':
+					if ( ! in_array( (string) $val, array_map( 'strval', (array) $c['val'] ), true ) ) { return false; }
+					break;
+				case 'ISNULL':
+					if ( null !== $val && '' !== $val ) { return false; }
+					break;
 				default: return false;
 			}
 		}
@@ -232,7 +276,7 @@ class Fake_WPDB {
 			$table = trim( $m[1], '`' );
 			preg_match_all( "/(\w+)\s*=\s*('([^']*)'|NULL|\d+)/i", $m[2], $sets, PREG_SET_ORDER );
 			$data = array();
-			foreach ( $sets as $s ) { $data[ $s[1] ] = ( 'NULL' === $s[2] ) ? null : $s[3]; }
+			foreach ( $sets as $s ) { $data[ $s[1] ] = ( 'NULL' === $s[2] || ! isset( $s[3] ) ) ? ( 'NULL' === $s[2] ? null : $s[2] ) : $s[3]; }
 			$rows = $this->rows( $table );
 			$conds = $this->parse_where( $m[3] );
 			$affected = 0;
@@ -310,7 +354,12 @@ class WC_Product_Attribute {
 function wc_get_product( $id ) { return isset( $GLOBALS['bcs_products'][ (int) $id ] ) ? $GLOBALS['bcs_products'][ (int) $id ] : null; }
 function wc_delete_product_transients( $id ) {}
 function wc_format_decimal( $v ) { return (string) ( 0 + str_replace( ',', '', (string) $v ) ); }
-function wc_get_product_id_by_sku( $sku ) { return null; }
+function wc_get_product_id_by_sku( $sku ) {
+	$map = isset( $GLOBALS['bcs_sku_map'] ) ? $GLOBALS['bcs_sku_map'] : array();
+	$key = strtolower( trim( (string) $sku ) );
+
+	return isset( $map[ $key ] ) ? (int) $map[ $key ] : null;
+}
 function get_term_by( $f, $v, $tax ) { return false; }
 function wp_insert_term( $name, $tax, $args = array() ) { static $tid = 500; return array( 'term_id' => ++$tid, 'slug' => sanitize_title( $name ) ); }
 function get_terms( $args ) { return array(); }
@@ -432,9 +481,25 @@ $job = BCS_Job_Manager::get( $job_id );
 expect( 'T4 job planned', 'planned' === $job['status'] );
 expect( 'T4 active_plan_id terisi', $job['active_plan_id'] === $p1['plan_id'] );
 
-/* T5: build ulang job planned ditolak */
+/* T5 → R6 (MINOR-2 retur QA-1): rebuild pada job planned DIIZINKAN —
+ * plan baru versi N+1, plan planned lama jadi superseded. */
 $p2 = BCS_Abilities::execute_build_plan( array( 'job_id' => $job_id, 'on_duplicate' => 'skip' ) );
-expect( 'T5 rebuild pada job planned ditolak (state)', is_wp_error( $p2 ) && 'bcs_invalid_state' === $p2->get_error_code() );
+expect( 'T5/R6 rebuild pada job planned sukses', ! is_wp_error( $p2 ) );
+if ( is_wp_error( $p2 ) ) { echo $p2->get_error_message() . "\n"; exit( 1 ); }
+expect( 'R6 plan baru versi 2', $p2['plan_id'] !== $p1['plan_id'] );
+$old_plan_row = BCS_Plan_Builder::get_plan_row( $p1['plan_id'] );
+expect( 'R6 plan lama superseded', 'superseded' === (string) $old_plan_row->status );
+$job = BCS_Job_Manager::get( $job_id );
+expect( 'R6 active_plan_id pindah ke plan baru', $job['active_plan_id'] === $p2['plan_id'] );
+$p1 = $p2; // alur lanjutan memakai plan terbaru.
+
+/* R6b: approve pada plan superseded ditolak walau token-nya valid. */
+$old_token = BCS_Approval_Token::generate( $old_plan_row->id, (string) $old_plan_row->plan_hash );
+expect( 'R6b token plan lama bisa di-generate', is_string( $old_token ) );
+$old_approve = BCS_Abilities::execute_approve_plan( array(
+	'plan_id' => (int) $old_plan_row->id, 'plan_hash' => (string) $old_plan_row->plan_hash, 'confirmation_token' => $old_token,
+) );
+expect( 'R6b approve plan superseded ditolak', is_wp_error( $old_approve ) );
 
 /* T6: transisi planned → executing langsung ditolak */
 $tr = BCS_Job_Manager::transition( $job_id, 'executing', 'test' );
@@ -454,7 +519,8 @@ expect( 'T8 state tetap planned setelah dry_run', 'planned' === $job['status'] )
 
 /* T9: approve dengan token */
 $token = BCS_Approval_Token::generate( $p1['plan_id'], $p1['plan_hash'] );
-expect( 'T9 token format BCS-XXXXX', is_string( $token ) && 1 === preg_match( '/^BCS-[A-Z2-9]{5}$/', $token ) );
+expect( 'T9 token format BCS-XXXXXXXX (8 char, MINOR-1)', is_string( $token ) && 1 === preg_match( '/^BCS-[A-Z2-9]{8}$/', $token ) );
+expect( 'R5 token total 12 char (schema maxLength 12)', is_string( $token ) && 12 === strlen( $token ) );
 
 $bad = BCS_Abilities::execute_approve_plan( array(
 	'plan_id' => $p1['plan_id'], 'plan_hash' => $p1['plan_hash'], 'confirmation_token' => 'BCS-00000',
@@ -521,6 +587,19 @@ expect( 'T12 28 entri create_product ok', 28 === $row_entries );
 $x2 = BCS_Abilities::execute_execute_batch( array( 'plan_id' => $p1['plan_id'] ) );
 expect( 'T13 execute ulang pada job done ditolak', is_wp_error( $x2 ) );
 
+/* R10 (MINOR-4 retur QA-1): resume tidak menghitung ulang baris ok/skip
+ * sebagai `skipped` — counter job tetap persis. */
+global $wpdb;
+// phpcs:ignore Squiz.PHP.CommentedOutCode.Found
+$wpdb->update( 'wp_bcs_jobs', array( 'status' => 'executing', 'last_error' => 'bcs_deferred: uji regresi resume' ), array( 'id' => $job_id ) );
+$x3 = BCS_Abilities::execute_execute_batch( array( 'plan_id' => $p1['plan_id'], 'resume' => true ) );
+expect( 'R10 resume sukses', ! is_wp_error( $x3 ) );
+if ( is_wp_error( $x3 ) ) { echo $x3->get_error_message() . "\n"; exit( 1 ); }
+expect( 'R10 status kembali done', 'done' === $x3['status'] );
+expect( 'R10 skipped tetap 2 (tidak double-count)', 2 === $x3['counts']['skipped'] );
+expect( 'R10 products_created tetap 28', 28 === $x3['counts']['products_created'] );
+expect( 'R10 variations tetap 60', 60 === $x3['counts']['variations_created'] );
+
 /* T14: rollback */
 $rb0 = BCS_Rollback_Service::rollback( $job_id, false );
 expect( 'T14 rollback tanpa confirm ditolak', is_wp_error( $rb0 ) && 'bcs_confirm_required' === $rb0->get_error_code() );
@@ -573,6 +652,221 @@ for ( $i = 0; $i < 61; $i++ ) {
 	$limited = BCS_Abilities::execute_job_status( array( 'job_id' => $job_id + 999 ) );
 }
 expect( 'T17 panggilan ke-61 kena rate limit', is_wp_error( $limited ) && 'bcs_rate_limited' === $limited->get_error_code() );
+
+/* =====================================================================
+ * REGRESI RETUR QA-1
+ * =================================================================== */
+
+/* Reset rate limit agar regresi tidak kena limit dari T17. */
+$GLOBALS['bcs_transients'] = array();
+
+/* ---- R1 (BLOCKER-1): update tidak menyentuh status/stok yang tak dikirim ---- */
+$GLOBALS['bcs_sku_map'] = array( 'exist-1' => 555, 'exist-2' => 556 );
+
+$prod555 = new WC_Product();
+$prod555->props['id'] = 555;
+$prod555->set_name( 'Existing A' );
+$prod555->set_status( 'publish' );
+$prod555->set_stock_quantity( 7 );
+$prod555->set_sku( 'EXIST-1' );
+$prod555->save();
+
+$prod556 = new WC_Product();
+$prod556->props['id'] = 556;
+$prod556->set_name( 'Existing B' );
+$prod556->set_status( 'publish' );
+$prod556->set_stock_quantity( 11 );
+$prod556->set_sku( 'EXIST-2' );
+$prod556->save();
+
+$csv_upd = "name,sku,regular_price,stock_quantity\nUpdated A,EXIST-1,199000,\nUpdated B,EXIST-2,99000,33\n";
+$r_upd = BCS_Abilities::execute_parse_source( array(
+	'source_type' => 'inline_csv',
+	'csv_text'    => $csv_upd,
+	'source_name' => 'update-regresi.csv',
+) );
+expect( 'R1 parse job update sukses', ! is_wp_error( $r_upd ) );
+if ( is_wp_error( $r_upd ) ) { echo $r_upd->get_error_message() . "\n"; exit( 1 ); }
+$upd_dup = BCS_Abilities::execute_check_duplicates( array( 'job_id' => $r_upd['job_id'], 'strategy' => 'sku' ) );
+expect( 'R1 dup check menemukan 2 existing', ! is_wp_error( $upd_dup ) && 2 === count( $upd_dup['existing_matches'] ) );
+$upd_plan = BCS_Abilities::execute_build_plan( array( 'job_id' => $r_upd['job_id'], 'on_duplicate' => 'update' ) );
+expect( 'R1 build update sukses', ! is_wp_error( $upd_plan ) );
+if ( is_wp_error( $upd_plan ) ) { echo $upd_plan->get_error_message() . "\n"; exit( 1 ); }
+
+$upd_plan_row  = BCS_Plan_Builder::get_plan_row( $upd_plan['plan_id'] );
+$upd_plan_data = BCS_Plan_Builder::decode_plan( $upd_plan_row );
+$op_by_row     = array();
+foreach ( $upd_plan_data['operations'] as $opu ) { $op_by_row[ $opu['row_index'] ] = $opu; }
+
+$pay1 = $op_by_row[1]['payload']; // stok KOSONG di CSV
+$pay2 = $op_by_row[2]['payload']; // stok 33 eksplisit
+expect( 'R1 payload update baris stok-kosong: TANPA status', ! isset( $pay1['status'] ) );
+expect( 'R1 payload update baris stok-kosong: TANPA stock_quantity', ! isset( $pay1['stock_quantity'] ) );
+expect( 'R1 payload update baris stok-eksplisit: TANPA status', ! isset( $pay2['status'] ) );
+expect( 'R1 payload update baris stok-eksplisit: stock_quantity 33', isset( $pay2['stock_quantity'] ) && 33 === $pay2['stock_quantity'] );
+
+// Alur approval wajib sebelum execute (pipeline tidak mengizinkan jalan pintas).
+$tok_upd = BCS_Approval_Token::generate( $upd_plan['plan_id'], $upd_plan['plan_hash'] );
+$app_upd = BCS_Abilities::execute_approve_plan( array(
+	'plan_id' => $upd_plan['plan_id'], 'plan_hash' => $upd_plan['plan_hash'], 'confirmation_token' => $tok_upd,
+) );
+expect( 'R1 approve plan update sukses', ! is_wp_error( $app_upd ) );
+
+$upd_exec = BCS_Abilities::execute_execute_batch( array( 'plan_id' => $upd_plan['plan_id'] ) );
+expect( 'R1 execute update sukses', ! is_wp_error( $upd_exec ) && 'done' === $upd_exec['status'] );
+if ( is_wp_error( $upd_exec ) || 'done' !== $upd_exec['status'] ) { echo "== R1 DEBUG ==\n"; var_export( $upd_exec ); echo "\n"; }
+expect( 'R1 status produk 555 TETAP publish (tidak di-draft-kan)', 'publish' === $GLOBALS['bcs_products'][555]->get_status() );
+expect( 'R1 stok produk 555 TETAP 7 (tidak di-nol-kan)', 7 === (int) $GLOBALS['bcs_products'][555]->get_stock_quantity() );
+expect( 'R1 nama produk 555 berubah', 'Updated A' === $GLOBALS['bcs_products'][555]->get_name() );
+expect( 'R1 stok produk 556 jadi 33 (eksplisit)', 33 === (int) $GLOBALS['bcs_products'][556]->get_stock_quantity() );
+expect( 'R1 status produk 556 tetap publish', 'publish' === $GLOBALS['bcs_products'][556]->get_status() );
+
+/* ---- R2 (MAJOR-3): rollback job-scoped — row_key sama lintas job ---- */
+$csv_rb = "name,sku,regular_price\nRollback Target,RB-1,50000\n";
+$hash_rb     = sha1( $csv_rb );
+$row_key_rb  = BCS_CSV_Parser::row_key( $hash_rb, 1, 'RB-1' );
+
+$job_a = BCS_Job_Manager::create( array( 'source_type' => 'inline_csv', 'source_name' => 'rb-a', 'source_hash' => $hash_rb, 'total_rows' => 1, 'mapping' => array() ) );
+$job_b = BCS_Job_Manager::create( array( 'source_type' => 'inline_csv', 'source_name' => 'rb-b', 'source_hash' => $hash_rb, 'total_rows' => 1, 'mapping' => array() ) );
+foreach ( array( 'parsed', 'planned', 'approved', 'executing', 'done' ) as $st_rb ) {
+	BCS_Job_Manager::transition( $job_a, $st_rb, 'regresi' );
+	BCS_Job_Manager::transition( $job_b, $st_rb, 'regresi' );
+}
+
+$prod_a = new WC_Product();
+$prod_a->set_name( 'Prod Job A' );
+$prod_a->set_sku( 'RB-1' );
+$prod_a_id = $prod_a->save();
+
+$prod_b = new WC_Product();
+$prod_b->set_name( 'Prod Job B' );
+$prod_b->set_sku( 'RB-1' );
+$prod_b_id = $prod_b->save();
+
+// Entri audit create_product ok untuk KEDUA job dengan row_key identik.
+BCS_Audit_Logger::log_row( 'bcs/execute-batch', 'create_product', 'ok', 1, 'RB-1', $prod_a_id, 'job A', $row_key_rb, $job_a );
+BCS_Audit_Logger::log_row( 'bcs/execute-batch', 'create_product', 'ok', 1, 'RB-1', $prod_b_id, 'job B', $row_key_rb, $job_b );
+
+// Plan row manual untuk job B.
+$GLOBALS['wpdb']->insert( 'wp_bcs_plans', array(
+	'job_id'     => $job_b,
+	'version'    => 1,
+	'plan_json'  => wp_json_encode( array( 'operations' => array( array(
+		'row_index' => 1, 'row_key' => $row_key_rb, 'op' => 'create_product',
+		'product_type' => 'simple', 'target_product_id' => null,
+		'payload' => array( 'name' => 'Prod Job B', 'sku' => 'RB-1' ), 'before' => null,
+	) ) ) ),
+	'plan_hash'  => str_repeat( 'b', 40 ),
+	'status'     => 'executed',
+	'created_at' => gmdate( 'Y-m-d H:i:s' ),
+) );
+$plan_b_id = (int) $GLOBALS['wpdb']->insert_id;
+BCS_Job_Manager::update_fields( $job_b, array( 'active_plan_id' => $plan_b_id ) );
+
+$rb_qa = BCS_Rollback_Service::rollback( $job_b, true, 'all' );
+expect( 'R2 rollback job B sukses', ! is_wp_error( $rb_qa ) );
+if ( is_wp_error( $rb_qa ) ) { echo $rb_qa->get_error_message() . "\n"; exit( 1 ); }
+expect( 'R2 rollback job B men-trash 1 produk', 1 === $rb_qa['counts']['products_trashed'] );
+expect( 'R2 produk job B kena trash', 'trash' === $GLOBALS['bcs_products'][ $prod_b_id ]->get_status() );
+expect( 'R2 produk job A AMAN (tidak ikut kena trash, row_key sama)', 'trash' !== $GLOBALS['bcs_products'][ $prod_a_id ]->get_status() );
+
+/* ---- R3 (MAJOR-2): konsumsi token atomik + dua approve bersamaan ---- */
+$tok_r3 = BCS_Approval_Token::generate( $p1['plan_id'], $p1['plan_hash'] );
+expect( 'R3 generate token utk consume test', is_string( $tok_r3 ) );
+$c1 = BCS_Approval_Token::consume( $p1['plan_id'], 1 );
+$c2 = BCS_Approval_Token::consume( $p1['plan_id'], 1 );
+expect( 'R3 consume pertama sukses', ! is_wp_error( $c1 ) );
+expect( 'R3 consume kedua DITOLAK (WHERE token_used_at IS NULL)', is_wp_error( $c2 ) && 'bcs_token_used' === $c2->get_error_code() );
+
+// Simulasi dua approve "bersamaan" pada job planned baru: hanya satu pemenang.
+$csv_conc = "name,sku,regular_price\nConc Item,CONC-1,1000\n";
+$r_conc = BCS_Abilities::execute_parse_source( array( 'source_type' => 'inline_csv', 'csv_text' => $csv_conc, 'source_name' => 'conc.csv' ) );
+expect( 'R3 parse job concurrent sukses', ! is_wp_error( $r_conc ) );
+BCS_Abilities::execute_check_duplicates( array( 'job_id' => $r_conc['job_id'], 'strategy' => 'sku' ) );
+$plan_conc = BCS_Abilities::execute_build_plan( array( 'job_id' => $r_conc['job_id'], 'on_duplicate' => 'skip' ) );
+expect( 'R3 build job concurrent sukses', ! is_wp_error( $plan_conc ) );
+$tok_conc = BCS_Approval_Token::generate( $plan_conc['plan_id'], $plan_conc['plan_hash'] );
+$a_conc1 = BCS_Abilities::execute_approve_plan( array( 'plan_id' => $plan_conc['plan_id'], 'plan_hash' => $plan_conc['plan_hash'], 'confirmation_token' => $tok_conc ) );
+$a_conc2 = BCS_Abilities::execute_approve_plan( array( 'plan_id' => $plan_conc['plan_id'], 'plan_hash' => $plan_conc['plan_hash'], 'confirmation_token' => $tok_conc ) );
+expect( 'R3 approve pertama sukses', ! is_wp_error( $a_conc1 ) );
+expect( 'R3 approve kedua (token sama) DITOLAK', is_wp_error( $a_conc2 ) );
+
+/* ---- R4 (MAJOR-1): SSRF guard ---- */
+expect( 'R4 whitelist docs.google.com lolos', BCS_Abilities::is_host_allowed( 'docs.google.com' ) );
+expect( 'R4 whitelist evil.com ditolak', ! BCS_Abilities::is_host_allowed( 'evil.com' ) );
+expect( 'R4 IP metadata cloud 169.254.169.254 privat', BCS_Abilities::is_ip_private( '169.254.169.254' ) );
+expect( 'R4 IP 10.1.2.3 privat', BCS_Abilities::is_ip_private( '10.1.2.3' ) );
+expect( 'R4 IP 127.0.0.1 loopback', BCS_Abilities::is_ip_private( '127.0.0.1' ) );
+expect( 'R4 IP 172.16.5.4 privat', BCS_Abilities::is_ip_private( '172.16.5.4' ) );
+expect( 'R4 IP 192.168.1.1 privat', BCS_Abilities::is_ip_private( '192.168.1.1' ) );
+expect( 'R4 IP 100.64.0.5 CGNAT', BCS_Abilities::is_ip_private( '100.64.0.5' ) );
+expect( 'R4 IP 8.8.8.8 publik', ! BCS_Abilities::is_ip_private( '8.8.8.8' ) );
+expect( 'R4 IPv6 ::1 loopback', BCS_Abilities::is_ip_private( '::1' ) );
+expect( 'R4 IPv6 fd00::1 unique-local', BCS_Abilities::is_ip_private( 'fd00::1' ) );
+expect( 'R4 IPv6 fe80::1 link-local', BCS_Abilities::is_ip_private( 'fe80::1' ) );
+expect( 'R4 IPv6 2600::1 publik', ! BCS_Abilities::is_ip_private( '2600::1' ) );
+
+$r_ssr1 = BCS_Abilities::execute_parse_source( array( 'source_type' => 'url', 'url' => 'https://evil.com/a.csv' ) );
+expect( 'R4 url evil.com DITOLAK (bukan whitelist)', is_wp_error( $r_ssr1 ) && 'bcs_host_not_allowed' === $r_ssr1->get_error_code() );
+$r_ssr2 = BCS_Abilities::execute_parse_source( array( 'source_type' => 'url', 'url' => 'https://127.0.0.1:9200/_search' ) );
+expect( 'R4 url 127.0.0.1 DITOLAK', is_wp_error( $r_ssr2 ) && 'bcs_host_not_allowed' === $r_ssr2->get_error_code() );
+$r_ssr3 = BCS_Abilities::execute_parse_source( array( 'source_type' => 'url', 'url' => 'http://docs.google.com/a.csv' ) );
+expect( 'R4 url non-https DITOLAK', is_wp_error( $r_ssr3 ) );
+
+// Happy path hanya deterministik bila DNS tersedia (gethostbyname native).
+if ( gethostbyname( 'docs.google.com' ) !== 'docs.google.com' ) {
+	$GLOBALS['bcs_http_stub_body'] = "name,sku\nDocs Item,GS-1\n";
+	$r_ssr4 = BCS_Abilities::execute_parse_source( array( 'source_type' => 'url', 'url' => 'https://docs.google.com/spreadsheets/d/X/export?format=csv' ) );
+	expect( 'R4 url docs.google.com export=csv diterima', ! is_wp_error( $r_ssr4 ) );
+	if ( ! is_wp_error( $r_ssr4 ) ) {
+		expect( 'R4 body stub ter-parse 1 baris', 1 === $r_ssr4['total_rows'] );
+	}
+	$r_ssr5 = BCS_Abilities::execute_parse_source( array( 'source_type' => 'url', 'url' => 'https://docs.google.com/spreadsheets/d/X/edit' ) );
+	expect( 'R4 url docs.google.com tanpa export=csv DITOLAK', is_wp_error( $r_ssr5 ) );
+	unset( $GLOBALS['bcs_http_stub_body'] );
+} else {
+	echo "SKIP - R4 happy-path (DNS offline; whitelist + blokir IP sudah diuji unit)\n";
+}
+
+/* ---- R7 (MINOR-5): image_warning sampai ke pemanggil ---- */
+$op_r7 = array(
+	'op'           => 'create_product',
+	'product_type' => 'simple',
+	'row_key'      => sha1( 'r7' ),
+	'payload'      => array(
+		'name' => 'Img Warn', 'sku' => 'IMGW-1', 'regular_price' => '1000',
+		'status' => 'draft', 'stock_quantity' => 1,
+		'image' => array( 'attachment_id' => 987654, 'alt_text' => 'x' ),
+	),
+);
+$res_r7 = BCS_Catalog_Writer::execute_operation( $op_r7, 1, 1 );
+expect( 'R7 create dengan attachment invalid tetap sukses', ! is_wp_error( $res_r7 ) );
+expect( 'R7 image_warning tidak lagi null (dead code fixed)', isset( $res_r7['image_warning'] ) && null !== $res_r7['image_warning'] );
+
+/* ---- R8 (MINOR-7): CSV Windows-1252 dikonversi UTF-8 ---- */
+if ( function_exists( 'mb_check_encoding' ) ) {
+	$csv_1252 = "name,sku\nCaf\xE9,WS-1\n";
+	$p_r8 = BCS_CSV_Parser::parse( $csv_1252, ',', true, array(), sha1( $csv_1252 ) );
+	expect( 'R8 parse CSV Windows-1252 sukses', ! is_wp_error( $p_r8 ) );
+	if ( ! is_wp_error( $p_r8 ) ) {
+		$name_r8 = isset( $p_r8['rows'][0] ) ? $p_r8['rows'][0]['name'] : '';
+		expect( 'R8 hasil UTF-8 valid', '' !== $name_r8 && mb_check_encoding( $name_r8, 'UTF-8' ) );
+		expect( 'R8 é terkonversi benar (Café)', false !== strpos( $name_r8, "Caf\xC3\xA9" ) );
+		expect( 'R8 warning konversi muncul', count( preg_grep( '/UTF-8/', $p_r8['warnings'] ) ) > 0 );
+	}
+} else {
+	echo "SKIP - R8 (mbstring tidak tersedia)\n";
+}
+
+/* ---- R9 (NIT-4): override update pada baris non-dup ditolak saat build ---- */
+$csv_r9 = "name,sku,regular_price\nSolo Item,SOLO-1,1000\n";
+$r_r9 = BCS_Abilities::execute_parse_source( array( 'source_type' => 'inline_csv', 'csv_text' => $csv_r9, 'source_name' => 'r9.csv' ) );
+BCS_Abilities::execute_check_duplicates( array( 'job_id' => $r_r9['job_id'], 'strategy' => 'sku' ) );
+$b_r9 = BCS_Abilities::execute_build_plan( array(
+	'job_id' => $r_r9['job_id'], 'on_duplicate' => 'skip',
+	'row_overrides' => array( array( 'row_index' => 1, 'op' => 'update' ) ),
+) );
+expect( 'R9 override update pada non-dup ditolak eksplisit', is_wp_error( $b_r9 ) && 'bcs_invalid_override' === $b_r9->get_error_code() );
 
 echo $fail > 0 ? "\n$fail TEST GAGAL\n" : "\nSEMUA TEST INTEGRASI PASS\n";
 exit( $fail > 0 ? 1 : 0 );

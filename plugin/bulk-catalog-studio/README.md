@@ -9,9 +9,17 @@ parse → duplicate-check → build-plan → HUMAN APPROVAL (token one-time) →
 ```
 
 Plugin mendaftarkan 8 ability `bcs/*` via **WordPress Abilities API**
-(`wp_register_ability`, hook `wp_abilities_api_init`) dengan
-`meta.mcp.public = true` sehingga otomatis terekspos sebagai MCP tools oleh
-**MCP Adapter resmi** (default server `mcp-adapter-default-server`).
+(`wp_register_ability`, hook `wp_abilities_api_init`) dan mengeksposnya lewat
+**custom MCP server sendiri** (`bcs-mcp-server`, endpoint
+`/wp-json/bcs-mcp/mcp`) yang dibuat via `mcp_adapter_init` + `create_server()`
+(pola resmi MCP Adapter). Endpoint default
+`/wp-json/mcp/mcp-adapter-default-server` **TIDAK dipakai** — di server target
+route itu ter-intercept Novamira (`serverInfo: Novamira (legacy alias)`).
+
+Pada server kustom ini, 8 ability muncul sebagai **tool individual** di
+`tools/list` (`bcs-parse-source`, `bcs-check-duplicates`, `bcs-build-plan`,
+`bcs-approve-plan`, `bcs-execute-batch`, `bcs-job-status`, `bcs-rollback-batch`,
+`bcs-audit-log`) — bukan hanya via meta-tools discovery.
 
 Produk ditulis 100% lewat `WC_Product` / `WC_Product_Variable` /
 `WC_Product_Variation` CRUD (`WC_Product_Variable::sync()` setelah variasi) —
@@ -36,16 +44,16 @@ Buat user khusus MCP (bukan administrator), mis. `mcp-catalog`, dengan capabilit
 Lalu buat **Application Password** (Users → Profile → Application Passwords).
 
 Konfigurasi `mcpServers` (Claude Desktop / Claude Code) memakai proxy resmi
-`@automattic/mcp-wordpress-remote`:
+`@automattic/mcp-wordpress-remote` — **arahkan ke endpoint kustom BCS**:
 
 ```json
 {
   "mcpServers": {
-    "wordpress-mcp-server": {
+    "bulk-catalog-studio": {
       "command": "npx",
       "args": ["-y", "@automattic/mcp-wordpress-remote@latest"],
       "env": {
-        "WP_API_URL": "https://cf.djavaweb.com/wp-json/mcp/mcp-adapter-default-server",
+        "WP_API_URL": "https://cf.djavaweb.com/wp-json/bcs-mcp/mcp",
         "OAUTH_ENABLED": "false",
         "WP_API_USERNAME": "mcp-catalog",
         "WP_API_PASSWORD": "xxxx xxxx xxxx xxxx xxxx xxxx"
@@ -55,19 +63,24 @@ Konfigurasi `mcpServers` (Claude Desktop / Claude Code) memakai proxy resmi
 }
 ```
 
+(Ganti host sesuai situs: polanya `https://<domain>/wp-json/bcs-mcp/mcp`.)
+
 Catatan:
 
-| Env | Aturan |
+| Env / perilaku | Aturan |
 |---|---|
-| `WP_API_URL` | URL endpoint **penuh** default server. Domain telanjang → endpoint legacy `wordpress-mcp` (deprecated). |
+| `WP_API_URL` | Endpoint kustom BCS: `https://<domain>/wp-json/bcs-mcp/mcp`. **JANGAN** memakai `/wp-json/mcp/mcp-adapter-default-server` (ter-intercept Novamira di server target) maupun domain telanjang (resolve ke legacy `wordpress-mcp` yang deprecated). |
 | `OAUTH_ENABLED` | `false` — wajib agar memakai Application Password, bukan OAuth. |
 | `WP_API_USERNAME` | Username login WP (bukan email). |
 | `WP_API_PASSWORD` | Application Password (bukan password akun, bukan REST key WooCommerce). |
+| Transport permission | Server kustom menuntut `manage_woocommerce` di level transport (parameter ke-13 `create_server`), plus re-check capability per ability. |
 
-Setelah connect, ability ditemukan lewat meta-tool
-`mcp-adapter-discover-abilities` lalu dieksekusi via
-`mcp-adapter-execute-ability` (perilaku default server — ability tidak muncul
-satu per satu di `tools/list`).
+Karena endpoint ini **custom server**, semua 8 tool BCS tampil langsung di
+`tools/list` (`bcs-parse-source`, … `bcs-audit-log`) — tidak perlu meta-tool
+`mcp-adapter-discover-abilities` seperti pada default server. Default server
+`mcp-adapter-default-server` tetap akan mengekspos ability BCS (via
+`meta.mcp.public`) bila route itu dipakai, tetapi jalur yang didukung dan
+diuji adalah endpoint kustom di atas.
 
 ## 3. Contoh alur 1 job (CSV 30 produk fashion)
 
@@ -118,18 +131,31 @@ ukuran×warna ≈ 60 variasi, 2 duplikat SKU) dan
   `image_id`). URL gambar diabaikan + warning (keputusan gate1 #4).
 - Batas: 500 baris/job hard, default setting 100 baris; inline 2 MB; attachment 10 MB.
 
-## 5. Batas V1 (keputusan gate1 — `docs/spec/gate1-decisions.md`)
+## 5. Batas V1 (keputusan gate1 — `docs/spec/gate1-decisions.md` + retur QA-1)
 
-1. Google Sheets: hanya URL export CSV **publik** (tanpa OAuth).
+1. Google Sheets: hanya URL export CSV **publik** (tanpa OAuth), dan **hanya
+   dari host `docs.google.com`** (batas SSRF retur QA-1 — host lain ditolak;
+   redirect dimatikan; IP privat/loopback/link-local diblokir. Perluas via
+   filter `bcs_allowed_source_hosts` dengan risiko sendiri).
 2. Approval: token one-time hanya di layar admin WP (tanpa email — V1.1).
+   Token kini 8 karakter + konsumsi atomik single-use.
 3. Capability write: `manage_woocommerce` (custom cap `bcs_execute` → V2).
 4. Gambar: `attachment_id_only` — tidak ada sideload URL (V1.1). Alt text tetap
    diisi ke attachment yang dirujuk.
-5. Rollback produk baru: **trash** (soft) sebagai satu-satunya opsi.
-6. Operasi `update_product` tidak menyentuh struktur variasi/atribut produk
-   existing di V1 (variasi hanya untuk create) — menjaga keakuratan rollback.
-7. Non-goals lain: agentic checkout, headless storefront, multi-vendor, AI
+5. Rollback produk baru: **trash** (soft) sebagai satu-satunya opsi. Rollback
+   memakai product_id dari audit job itu sendiri (job-scoped).
+6. Operasi `update_product` TIDAK menyentuh field yang tidak dikirim baris:
+   `status` tidak pernah diubah (defaults.status hanya untuk produk baru), dan
+   stok hanya di-update bila kolom stok terisi eksplisit (retur QA-1,
+   BLOCKER-1).
+7. Rebuild plan pada job `planned` diizinkan — plan lama otomatis `superseded`
+   dan token/approve lama tidak berlaku.
+8. Non-goals lain: agentic checkout, headless storefront, multi-vendor, AI
    copywriting di sisi plugin, dsb. (spec §7).
+9. MCP: hanya endpoint kustom `/wp-json/bcs-mcp/mcp` yang didukung (Gate 3).
+   Header plugin `Requires Plugins: woocommerce, mcp-adapter`; bila plugin
+   mcp-adapter tidak aktif, server kustom tidak dibuat (admin notice, tanpa
+   fatal) dan tidak ada route MCP BCS yang aktif.
 
 ## 6. Keamanan
 
@@ -166,6 +192,7 @@ includes/
   class-bcs-rollback-service.php trash/restore per plan
   class-bcs-job-manager.php      state machine + CRUD job
   class-bcs-audit-logger.php     audit call/row
+  class-bcs-mcp-server.php       custom MCP server /wp-json/bcs-mcp/mcp (Gate 3)
 admin/
   class-bcs-admin.php            halaman admin: jobs, diff preview, token, audit
 tests/fixtures/

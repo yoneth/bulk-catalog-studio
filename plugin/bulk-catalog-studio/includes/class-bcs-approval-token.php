@@ -50,9 +50,11 @@ class BCS_Approval_Token {
 			return new WP_Error( 'bcs_hash_mismatch', __( 'plan_hash tidak cocok dengan plan tersimpan.', 'bulk-catalog-studio' ) );
 		}
 
+		// MINOR-1 (retur QA-1): 8 karakter (±39 bit entropy, charset 31) —
+		// total 12 karakter, masih dalam maxLength 12 schema input approve.
 		$chars = self::charset();
 		$suffix = '';
-		for ( $i = 0; $i < 5; $i++ ) {
+		for ( $i = 0; $i < 8; $i++ ) {
 			$suffix .= $chars[ wp_rand( 0, strlen( $chars ) - 1 ) ];
 		}
 		$token = 'BCS-' . $suffix;
@@ -132,6 +134,12 @@ class BCS_Approval_Token {
 	/**
 	 * Tandai token terpakai + catat approver (spec §1.4, single-use).
 	 *
+	 * MAJOR-2 (retur QA-1): konsumsi ATOMIK — update hanya berjalan bila
+	 * `token_used_at IS NULL`; `affected_rows === 1` menjamin tepat satu
+	 * pemanggil yang menang (dua approve bersamaan tidak bisa membakar token
+	 * dua kali). Dipanggil SETELAH transisi state job sukses agar token tidak
+	 * terbakar tanpa approval bila transisi gagal.
+	 *
 	 * @param int $plan_id    ID plan.
 	 * @param int $approved_by User ID approver.
 	 * @return true|WP_Error
@@ -140,22 +148,21 @@ class BCS_Approval_Token {
 		global $wpdb;
 
 		$table = $wpdb->prefix . 'bcs_plans';
+		$now   = BCS_Settings::now_mysql();
 
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- tabel kustom.
-		$updated = $wpdb->update(
-			$table,
-			array(
-				'token_used_at' => BCS_Settings::now_mysql(),
-				'approved_by'   => absint( $approved_by ),
-				'approved_at'   => BCS_Settings::now_mysql(),
-			),
-			array( 'id' => absint( $plan_id ) ),
-			array( '%s', '%d', '%s' ),
-			array( '%d' )
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- tabel kustom, guard atomik single-use.
+		$affected = $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$table} SET token_used_at = %s, approved_by = %d, approved_at = %s WHERE id = %d AND token_used_at IS NULL", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- nama tabel dari prefix, nilai via prepare.
+				$now,
+				absint( $approved_by ),
+				$now,
+				absint( $plan_id )
+			)
 		);
 
-		if ( false === $updated ) {
-			return new WP_Error( 'bcs_db_error', __( 'Gagal menandai token sebagai terpakai.', 'bulk-catalog-studio' ) );
+		if ( 1 !== (int) $affected ) {
+			return new WP_Error( 'bcs_token_used', __( 'Token sudah dikonsumsi oleh proses lain (single-use atomik).', 'bulk-catalog-studio' ) );
 		}
 
 		return true;

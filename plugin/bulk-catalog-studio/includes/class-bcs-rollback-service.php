@@ -100,7 +100,9 @@ class BCS_Rollback_Service {
 			}
 
 			if ( 'create_product' === $action && in_array( $scope, array( 'all', 'created_only' ), true ) ) {
-				// product ID hasil create: dari meta _bcs_row_key (sumber paling presisi).
+				// MAJOR-3 (retur QA-1): product_id diambil dari AUDIT job ini
+				// (job-scoped), bukan lookup meta row_key yang bisa kollide
+				// lintas job (row_key sengaja tanpa job_id — spec §5.4).
 				$product_id = self::find_created_product_id( $job_id, $row_key );
 
 				if ( ! $product_id ) {
@@ -218,26 +220,25 @@ class BCS_Rollback_Service {
 	}
 
 	/**
-	 * Temukan product ID hasil create: prioritas meta _bcs_row_key pada produk
-	 * (ditulis oleh catalog writer), fallback null bila tidak ketemu.
+	 * Temukan product ID hasil create untuk (job, row_key).
 	 *
-	 * @param int    $job_id  ID job (reservasi untuk pelacakan lanjutan).
+	 * Sumber primer: entri audit create_product ok milik job INI (job-scoped —
+	 * MAJOR-3 retur QA-1). Fallback: meta `_bcs_row_key` + verifikasi
+	 * `_bcs_job_id` = job ini (meta row_key tanpa verifikasi job bisa
+	 * menunjuk produk milik job lain).
+	 *
+	 * @param int    $job_id  ID job.
 	 * @param string $row_key row_key operasi.
 	 * @return int|null
 	 */
 	private static function find_created_product_id( $job_id, $row_key ) {
-		unset( $job_id );
+		// 1) Sumber primer: audit job ini.
+		$from_audit = BCS_Audit_Logger::find_row_product_id( $job_id, $row_key, 'create_product' );
+		if ( $from_audit ) {
+			return $from_audit;
+		}
 
-		return self::find_product_by_row_key( $row_key );
-	}
-
-	/**
-	 * Cari produk by meta _bcs_row_key (tulis plan menjamin meta ini ada).
-	 *
-	 * @param string $row_key row_key.
-	 * @return int|null
-	 */
-	private static function find_product_by_row_key( $row_key ) {
+		// 2) Fallback: meta row_key + verifikasi kepemilikan job.
 		if ( '' === (string) $row_key ) {
 			return null;
 		}
@@ -248,10 +249,15 @@ class BCS_Rollback_Service {
 				'post_status'    => 'any',
 				'posts_per_page' => 1,
 				'fields'         => 'ids',
-				'meta_query'     => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- lookup presisi per row_key, maks 1 hasil.
+				'meta_query'     => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- lookup presisi per row_key + job_id, maks 1 hasil.
+					'relation' => 'AND',
 					array(
 						'key'   => '_bcs_row_key',
 						'value' => (string) $row_key,
+					),
+					array(
+						'key'   => '_bcs_job_id',
+						'value' => absint( $job_id ),
 					),
 				),
 			)

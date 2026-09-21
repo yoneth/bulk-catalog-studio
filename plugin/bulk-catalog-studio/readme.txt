@@ -4,7 +4,7 @@ Tags: woocommerce, mcp, ai, bulk import, catalog, abilities-api
 Requires at least: 6.9
 Tested up to: 7.1
 Requires PHP: 7.4
-Requires Plugins: woocommerce
+Requires Plugins: woocommerce, mcp-adapter
 Stable tag: 1.0.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -31,10 +31,11 @@ Produk hasil BCS 100% native WooCommerce (CPT `product`, `product_variation`, ta
 == Installation ==
 
 1. Upload folder `bulk-catalog-studio` ke `/wp-content/plugins/`.
-2. Pastikan WooCommerce aktif, MCP Adapter aktif (default server `/wp-json/mcp/mcp-adapter-default-server`), dan WordPress ≥ 6.9.
+2. Pastikan WooCommerce aktif, plugin **mcp-adapter** aktif, dan WordPress ≥ 6.9.
 3. Aktifkan plugin melalui menu Plugins. Tabel `bcs_jobs`, `bcs_plans`, `bcs_audit` dibuat otomatis.
-4. Buat user khusus MCP (mis. `mcp-catalog`) dengan capability: `read`, `edit_products`, `manage_product_terms`, `manage_woocommerce`. Bukan administrator.
-5. Buat Application Password untuk user tersebut (Users → Profile → Application Passwords).
+4. Custom MCP server aktif di **`/wp-json/bcs-mcp/mcp`** — endpoint default `/wp-json/mcp/mcp-adapter-default-server` tidak dipakai (ter-intercept Novamira di server target).
+5. Buat user khusus MCP (mis. `mcp-catalog`) dengan capability: `read`, `edit_products`, `manage_product_terms`, `manage_woocommerce`. Bukan administrator.
+6. Buat Application Password untuk user tersebut (Users → Profile → Application Passwords).
 
 == Connecting Claude ==
 
@@ -42,11 +43,11 @@ Konfigurasi `mcpServers` (Claude Desktop / Claude Code), memakai proxy resmi `@a
 
     {
       "mcpServers": {
-        "wordpress-mcp-server": {
+        "bulk-catalog-studio": {
           "command": "npx",
           "args": ["-y", "@automattic/mcp-wordpress-remote@latest"],
           "env": {
-            "WP_API_URL": "https://cf.djavaweb.com/wp-json/mcp/mcp-adapter-default-server",
+            "WP_API_URL": "https://cf.djavaweb.com/wp-json/bcs-mcp/mcp",
             "OAUTH_ENABLED": "false",
             "WP_API_USERNAME": "mcp-catalog",
             "WP_API_PASSWORD": "xxxx xxxx xxxx xxxx xxxx xxxx"
@@ -57,8 +58,10 @@ Konfigurasi `mcpServers` (Claude Desktop / Claude Code), memakai proxy resmi `@a
 
 Catatan penting:
 - `OAUTH_ENABLED=false` wajib agar proxy memakai Application Password (bukan OAuth).
-- `WP_API_URL` harus URL endpoint PENUH default server (`/wp-json/mcp/mcp-adapter-default-server`) — domain telanjang akan resolve ke endpoint legacy `wordpress-mcp` yang deprecated.
+- Endpoint utama adalah custom server BCS: `https://<domain>/wp-json/bcs-mcp/mcp`. Endpoint default `/wp-json/mcp/...` TIDAK dipakai (ter-intercept Novamira di server target) — domain telanjang juga harus dihindari (resolve ke legacy `wordpress-mcp` yang deprecated).
 - `WP_API_USERNAME` = username login WP (bukan email); `WP_API_PASSWORD` = Application Password (bukan password akun, bukan REST API key WooCommerce).
+- Pada custom server ini 8 tool BCS tampil individual di `tools/list` (`bcs-parse-source`, dst.).
+- Transport permission server kustom menuntut `manage_woocommerce` (plus re-check per ability).
 
 == Contoh alur 1 job ==
 
@@ -83,7 +86,7 @@ Tidak ada data hilang (AC-7): tabel dan settings dipertahankan. Hanya uninstall 
 
 = Format CSV yang didukung? =
 
-Delimiter koma / titik-koma / tab; baris header opsional dengan `column_mapping`; multi-nilai produk variabel dipisah `|` (opsi atribut, SKU variasi, harga variasi, stok variasi paralel). Batas V1: 500 baris/job (default setting 100), inline CSV 2 MB, attachment 10 MB.
+Delimiter koma / titik-koma / tab; baris header opsional dengan `column_mapping`; multi-nilai produk variabel dipisah `|` (opsi atribut, SKU variasi, harga variasi, stok variasi paralel). Mode URL hanya menerima export CSV publik dari docs.google.com (batas SSRF). Batas V1: 500 baris/job (default setting 100), inline CSV 2 MB, attachment 10 MB.
 
 == Changelog ==
 
@@ -92,3 +95,7 @@ Delimiter koma / titik-koma / tab; baris header opsional dengan `column_mapping`
 * 8 ability `bcs/*` (Abilities API + MCP Adapter, `meta.mcp.public`).
 * Pipeline approval token one-time, rollback snapshot, audit per baris.
 * Gambar: `attachment_id_only` (sideload ditunda V1.1 — keputusan gate1 #4).
+* Retur QA-1: update tidak menyentuh status/stok tak-dikirim; rollback
+  job-scoped dari audit; konsumsi token atomik single-use; SSRF guard (host
+  hanya docs.google.com, redirect off, blokir IP privat); rebuild plan
+  (superseded); resume tanpa double-count; konversi encoding CSV ke UTF-8.

@@ -6,7 +6,7 @@
  * Version:              1.0.0
  * Requires at least:    6.9
  * Requires PHP:         7.4
- * Requires Plugins:     woocommerce
+ * Requires Plugins:     woocommerce, mcp-adapter
  * Author:               cf.djavaweb.com
  * Author URI:           https://cf.djavaweb.com/
  * License:              GPL-2.0-or-later
@@ -42,6 +42,7 @@ require_once BCS_PLUGIN_DIR . 'includes/class-bcs-rollback-service.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-install.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-schemas.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-abilities.php';
+require_once BCS_PLUGIN_DIR . 'includes/class-bcs-mcp-server.php';
 require_once BCS_PLUGIN_DIR . 'admin/class-bcs-admin.php';
 
 /**
@@ -115,3 +116,11 @@ add_action( 'wp_abilities_api_init', array( 'BCS_Abilities', 'register_abilities
  * Halaman admin.
  */
 add_action( 'plugins_loaded', array( 'BCS_Admin', 'init' ) );
+
+/*
+ * Custom MCP server (Gate 3): endpoint /wp-json/bcs-mcp/mcp — nol
+ * ketergantungan pada route default yang ter-intercept Novamira.
+ * Hook mcp_adapter_init hanya menembak bila plugin mcp-adapter aktif;
+ * guard class lengkap ada di BCS_MCP_Server (admin notice, tanpa fatal).
+ */
+BCS_MCP_Server::init();

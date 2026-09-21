@@ -75,8 +75,14 @@ class BCS_CSV_Parser {
 			return new WP_Error( 'bcs_empty_source', __( 'Sumber CSV kosong.', 'bulk-catalog-studio' ) );
 		}
 
-		// Normalisasi delimiter + strip BOM.
+		// Normalisasi delimiter + strip BOM + konversi encoding (MINOR-7 retur
+		// QA-1: CSV Windows-1252/ISO-8859-1 dari Excel umum — jangan simpan
+		// karakter rusak permanen ke produk).
 		$csv_text = self::strip_bom( (string) $csv_text );
+		$encoding_warning = self::maybe_convert_to_utf8( $csv_text );
+		if ( null !== $encoding_warning ) {
+			$warnings[] = $encoding_warning;
+		}
 		$delim    = self::delimiter_char( $delimiter );
 
 		// Baca seluruh baris via php://temp (aman memory untuk 2 MB).
@@ -225,6 +231,34 @@ class BCS_CSV_Parser {
 			$text = substr( $text, 3 );
 		}
 		return $text;
+	}
+
+	/**
+	 * Konversi sumber non-UTF-8 ke UTF-8 bila perlu (MINOR-7 retur QA-1).
+	 * Mengembalikan pesan warning bila konversi dilakukan, null bila tidak.
+	 *
+	 * @param string $csv_text Referensi isi CSV.
+	 * @return string|null
+	 */
+	private static function maybe_convert_to_utf8( &$csv_text ) {
+		if ( ! function_exists( 'mb_check_encoding' ) ) {
+			return null; // mbstring tidak ada — biarkan (host standar WP menyediakan).
+		}
+		if ( mb_check_encoding( $csv_text, 'UTF-8' ) ) {
+			return null;
+		}
+		if ( ! function_exists( 'mb_convert_encoding' ) ) {
+			return __( 'Sumber bukan UTF-8 valid dan mb_convert_encoding tidak tersedia — karakter non-ASCII berisiko rusak.', 'bulk-catalog-studio' );
+		}
+
+		$converted = mb_convert_encoding( $csv_text, 'UTF-8', 'Windows-1252, ISO-8859-1, UTF-8' );
+		if ( is_string( $converted ) && '' !== $converted && mb_check_encoding( $converted, 'UTF-8' ) ) {
+			$csv_text = $converted;
+
+			return __( 'Sumber terdeteksi bukan UTF-8 (diduga Windows-1252/ISO-8859-1) — dikonversi ke UTF-8.', 'bulk-catalog-studio' );
+		}
+
+		return __( 'Sumber bukan UTF-8 valid dan konversi encoding gagal — karakter non-ASCII berisiko rusak.', 'bulk-catalog-studio' );
 	}
 
 	/**
@@ -444,7 +478,10 @@ class BCS_CSV_Parser {
 		$row['sale_price']    = self::parse_price( self::first_value( $values, 'sale_price' ), $row_index, 'harga diskon', $warnings );
 
 		// Stok: kosong → default 0 + warning (contoh spec §4).
+		// BLOCKER-1 (retur QA-1): simpan juga flag eksplisitas — operasi
+		// update TIDAK boleh membawa default 0 ke produk existing.
 		$stock_raw = self::first_value( $values, 'stock_quantity' );
+		$row['stock_provided'] = false;
 		if ( '' === $stock_raw ) {
 			$warnings[] = sprintf(
 				/* translators: 1: nomor baris */
@@ -453,6 +490,7 @@ class BCS_CSV_Parser {
 			);
 			$row['stock_quantity'] = 0;
 		} else {
+			$row['stock_provided'] = true;
 			$stock = self::parse_number( $stock_raw );
 			if ( null === $stock ) {
 				$warnings[] = sprintf(
@@ -461,6 +499,7 @@ class BCS_CSV_Parser {
 					$row_index,
 					$stock_raw
 				);
+				$row['stock_provided'] = false;
 				$row['stock_quantity'] = 0;
 			} else {
 				$row['stock_quantity'] = (int) round( (float) $stock );

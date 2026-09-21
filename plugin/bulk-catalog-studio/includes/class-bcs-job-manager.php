@@ -321,10 +321,13 @@ class BCS_Job_Manager {
 			}
 
 			// Guard: hanya job ini yang boleh executing; refresh heartbeat secara atomik.
+			// NIT-8 (retur QA-1): marker deferred di last_error DIPERTAHANKAN
+			// sampai finalisasi — bila request resume mati sebelum chunk
+			// selesai, resume berikutnya masih bisa masuk tanpa menunggu stale.
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- tabel kustom.
 			$wpdb->query(
 				$wpdb->prepare(
-					"UPDATE {$table} SET heartbeat_at = %s, updated_at = %s, last_error = NULL WHERE id = %d AND status = 'executing'", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- nama tabel dari prefix, nilai via prepare.
+					"UPDATE {$table} SET heartbeat_at = %s, updated_at = %s WHERE id = %d AND status = 'executing'", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- nama tabel dari prefix, nilai via prepare.
 					$now,
 					$now,
 					(int) $job->id

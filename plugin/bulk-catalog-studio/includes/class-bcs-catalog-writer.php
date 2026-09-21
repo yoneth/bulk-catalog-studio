@@ -305,10 +305,9 @@ class BCS_Catalog_Writer {
 
 		// Gambar.
 		$image_result = self::apply_image( $product, $payload['image'] ?? null );
-		if ( is_wp_error( $image_result ) ) {
-			// Gambar gagal tidak membatalkan produk — dicatat sebagai warning executor.
-			$image_result = null;
-		}
+		// MINOR-5 (retur QA-1): warning gambar gagal tidak dibuang —
+		// diteruskan ke pemanggil untuk masuk jejak audit.
+		$image_warning = is_wp_error( $image_result ) ? $image_result->get_error_message() : null;
 
 		// Kategori & tag (setelah save pertama agar term ids siap).
 		self::apply_terms( $product, $payload );
@@ -335,7 +334,7 @@ class BCS_Catalog_Writer {
 		return array(
 			'product_id'         => (int) $product_id,
 			'variations_created' => $variations_created,
-			'image_warning'      => is_wp_error( $image_result ) ? $image_result->get_error_message() : null,
+			'image_warning'      => $image_warning,
 		);
 	}
 

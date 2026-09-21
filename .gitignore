@@ -1,0 +1,10 @@
+# Kredensial & rahasia — jangan pernah commit
+.env
+*.env.local
+
+# State file skrip e2e
+tests/e2e/.state/
+tests/e2e/*.state
+
+# Sistem
+.DS_Store

@@ -330,7 +330,8 @@ class BCS_Abilities {
 				return new WP_Error( 'bcs_invalid_input', __( 'attachment_id bukan post_type attachment.', 'bulk-catalog-studio' ) );
 			}
 
-			$allowed_mimes = array( 'text/csv', 'text/plain', 'application/csv', 'application/vnd.ms-excel' );
+			// NIT-1 (retur QA-1): .xls biner dihapus — tidak bisa diparse fgetcsv.
+			$allowed_mimes = array( 'text/csv', 'text/plain', 'application/csv' );
 			if ( ! in_array( (string) $attachment->post_mime_type, $allowed_mimes, true ) ) {
 				return new WP_Error(
 					'bcs_invalid_input',
@@ -372,13 +373,39 @@ class BCS_Abilities {
 				return new WP_Error( 'bcs_invalid_input', __( 'Hanya URL https yang diizinkan (spec §1.1).', 'bulk-catalog-studio' ) );
 			}
 
-			// Khusus Google Sheets: wajib endpoint export CSV.
 			$host = wp_parse_url( $url, PHP_URL_HOST );
-			if ( $host && false !== strpos( (string) $host, 'docs.google.com' ) && false === strpos( $url, 'output=csv' ) && false === strpos( $url, 'format=csv' ) ) {
+
+			// MAJOR-1 (retur QA-1): V1 mengunci host ke docs.google.com
+			// (selaras gate1 #1 — hanya export CSV publik). Filter tersedia
+			// untuk deploy yang sengaja memperluas, tanggung jawab di admin.
+			if ( ! self::is_host_allowed( (string) $host ) ) {
+				return new WP_Error(
+					'bcs_host_not_allowed',
+					sprintf(
+						/* translators: 1: host */
+						__( 'Host "%1$s" tidak diizinkan. V1 hanya menerima export CSV publik dari docs.google.com (batas SSRF, retur QA-1).', 'bulk-catalog-studio' ),
+						(string) $host
+					)
+				);
+			}
+
+			// MAJOR-1: khusus Google Sheets wajib endpoint export CSV.
+			if ( false === strpos( $url, 'output=csv' ) && false === strpos( $url, 'format=csv' ) ) {
 				return new WP_Error( 'bcs_invalid_input', __( 'Google Sheets harus memakai endpoint export CSV publik (…/export?format=csv).', 'bulk-catalog-studio' ) );
 			}
 
-			$response = wp_remote_get( $url, array( 'timeout' => 30 ) );
+			// MAJOR-1: resolve host + tolak IP privat/loopback/link-local
+			// (defense-in-depth bila whitelist diperluas via filter).
+			$host_ip = self::resolve_host_ip( (string) $host );
+			if ( is_wp_error( $host_ip ) ) {
+				return $host_ip;
+			}
+
+			// MAJOR-1: matikan redirect — hop tanpa re-validasi = jalur SSRF.
+			$response = wp_remote_get( $url, array(
+				'timeout'     => 30,
+				'redirection' => 0,
+			) );
 
 			if ( is_wp_error( $response ) ) {
 				return $response;
@@ -481,6 +508,135 @@ class BCS_Abilities {
 			'warnings'         => array_map( 'strval', $warnings ),
 			'errors'           => array_map( 'strval', (array) $parsed['errors'] ),
 		);
+	}
+
+	/**
+	 * Host sumber URL diizinkan? (MAJOR-1 retur QA-1)
+	 * V1: hanya docs.google.com; dapat diperluas via filter
+	 * `bcs_allowed_source_hosts` (blokir IP privat tetap berlaku).
+	 *
+	 * @param string $host Host.
+	 * @return bool
+	 */
+	public static function is_host_allowed( $host ) {
+		$host = strtolower( trim( (string) $host ) );
+
+		$allowed = apply_filters(
+			'bcs_allowed_source_hosts',
+			array( 'docs.google.com' )
+		);
+
+		return in_array( $host, array_map( 'strtolower', (array) $allowed ), true );
+	}
+
+	/**
+	 * Resolve host ke IP + tolak IP privat/loopback/link-local.
+	 *
+	 * @param string $host Host.
+	 * @return true|WP_Error
+	 */
+	public static function resolve_host_ip( $host ) {
+		$host = trim( (string) $host );
+
+		if ( '' === $host ) {
+			return new WP_Error( 'bcs_invalid_input', __( 'Host URL kosong.', 'bulk-catalog-studio' ) );
+		}
+
+		// Jika host itu sendiri literal IP, validasi langsung.
+		if ( filter_var( $host, FILTER_VALIDATE_IP ) ) {
+			$ips = array( $host );
+		} else {
+			$resolved = gethostbyname( $host );
+			if ( $resolved === $host ) {
+				return new WP_Error(
+					'bcs_dns_failure',
+					__( 'Gagal me-resolve host sumber — URL ditolak.', 'bulk-catalog-studio' )
+				);
+			}
+			$ips = array( $resolved );
+		}
+
+		foreach ( $ips as $ip ) {
+			if ( self::is_ip_private( $ip ) ) {
+				return new WP_Error(
+					'bcs_private_ip_blocked',
+					sprintf(
+						/* translators: 1: IP */
+						__( 'Host me-resolve ke IP privat/loopback/link-local (%1$s) — diblokir (SSRF, retur QA-1).', 'bulk-catalog-studio' ),
+						(string) $ip
+					)
+				);
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * IP termasuk range privat/loopback/link-local?
+	 * (127/8, 10/8, 172.16/12, 192.168/16, 169.254/16, 0/8, 100.64/10 untuk
+	 * IPv4; ::1, fc00::/7, fe80::/10 untuk IPv6.)
+	 *
+	 * @param string $ip IP.
+	 * @return bool
+	 */
+	public static function is_ip_private( $ip ) {
+		$ip = trim( (string) $ip );
+
+		if ( false === filter_var( $ip, FILTER_VALIDATE_IP ) ) {
+			return true; // Tidak valid → anggap berbahaya.
+		}
+
+		if ( filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6 ) ) {
+			$packed = @inet_pton( $ip ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			if ( false === $packed ) {
+				return true;
+			}
+			if ( '::1' === $ip ) {
+				return true;
+			}
+			// fc00::/7 (unique local) dan fe80::/10 (link-local).
+			$first = ord( $packed[0] );
+			$second = ord( $packed[1] );
+			if ( 0xFC === ( $first & 0xFE ) ) {
+				return true; // fc00::/7.
+			}
+			if ( 0xFE === $first && 0x80 === ( $second & 0xC0 ) ) {
+				return true; // fe80::/10.
+			}
+			return false;
+		}
+
+		$long = ip2long( $ip );
+		if ( false === $long ) {
+			return true;
+		}
+
+		// Prefix presisi per range: 0/8, 10/8, 100.64/10 (CGNAT), 127/8,
+		// 169.254/16 (link-local, termasuk metadata cloud), 172.16/12, 192.168/16.
+		$private_ranges = array(
+			array( '0.0.0.0', 8 ),
+			array( '10.0.0.0', 8 ),
+			array( '100.64.0.0', 10 ),
+			array( '127.0.0.0', 8 ),
+			array( '169.254.0.0', 16 ),
+			array( '172.16.0.0', 12 ),
+			array( '192.168.0.0', 16 ),
+		);
+
+		foreach ( $private_ranges as $range ) {
+			list( $base, $prefix ) = $range;
+			$base_long = ip2long( $base );
+			if ( false === $base_long ) {
+				continue;
+			}
+			$mask = -1 << ( 32 - $prefix );
+			if ( ( $long & $mask ) === $base_long ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -623,6 +779,22 @@ class BCS_Abilities {
 
 		$job_id = (int) $plan_row->job_id;
 
+		// Gate plan: hanya plan berstatus planned yang bisa diapprove —
+		// plan 'superseded' (digantikan rebuild, MINOR-2 retur QA-1) ditolak.
+		if ( 'planned' !== (string) $plan_row->status ) {
+			$error = new WP_Error(
+				'bcs_invalid_state',
+				sprintf(
+					/* translators: %s: status plan */
+					__( 'approve-plan hanya untuk plan berstatus planned (status plan saat ini: %s — kemungkinan sudah digantikan plan lebih baru).', 'bulk-catalog-studio' ),
+					(string) $plan_row->status
+				)
+			);
+			BCS_Audit_Logger::log_call( 'bcs/approve-plan', 'approve_plan', 'failed', $error->get_error_message(), $job_id, $plan_id );
+
+			return $error;
+		}
+
 		// State gate: job harus planned.
 		$job = BCS_Job_Manager::get( $job_id );
 		if ( ! $job || 'planned' !== $job['status'] ) {
@@ -654,15 +826,22 @@ class BCS_Abilities {
 			);
 		}
 
-		// Konsumsi token + transisi.
-		$consume = BCS_Approval_Token::consume( $plan_id, get_current_user_id() );
-		if ( is_wp_error( $consume ) ) {
-			return $consume;
-		}
-
+		// MAJOR-2 (retur QA-1): transisi job DULU (atomik — hanya satu proses
+		// yang menang), baru konsumsi token secara atomik
+		// (WHERE token_used_at IS NULL). Urutan ini menjamin token tidak
+		// terbakar bila transisi gagal.
 		$transition = BCS_Job_Manager::transition( $job_id, 'approved', 'bcs/approve-plan' );
 		if ( is_wp_error( $transition ) ) {
 			return $transition;
+		}
+
+		$consume = BCS_Approval_Token::consume( $plan_id, get_current_user_id() );
+		if ( is_wp_error( $consume ) ) {
+			// Teoretis (pemenang transisi tunggal seharusnya menang consume);
+			// tetap dilaporkan + teraudit agar invariant terlihat.
+			BCS_Audit_Logger::log_call( 'bcs/approve-plan', 'approve_plan', 'failed', $consume->get_error_message(), $job_id, $plan_id );
+
+			return $consume;
 		}
 
 		BCS_Plan_Builder::set_status( $plan_id, 'approved' );

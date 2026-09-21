@@ -119,9 +119,12 @@ class BCS_Executor {
 			$sku       = isset( $op['payload']['sku'] ) ? (string) $op['payload']['sku'] : null;
 			$action    = isset( $op['op'] ) ? (string) $op['op'] : '';
 
-			// Idempotency resume (§5.4): baris sudah ok → lewati.
-			if ( $resumed && '' !== $row_key && BCS_Audit_Logger::has_row_success( $job_id, $row_key ) ) {
-				$counts['skipped']++;
+			// Idempotency resume (§5.4): baris yang sudah punya entri ok/skipped
+			// dilewati TANPA menambah counter skipped (MINOR-4 retur QA-1 —
+			// counter job sudah dipersist per chunk; skipped berarti
+			// skip-duplikat, bukan "sudah diproses run sebelumnya"). Entri
+			// failed tetap di-retry.
+			if ( $resumed && '' !== $row_key && BCS_Audit_Logger::has_row_entry( $job_id, $row_key ) ) {
 				continue;
 			}
 

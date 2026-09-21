@@ -97,6 +97,17 @@ class BCS_Admin {
 
 		$v = self::get_view();
 
+		// MINOR-6 (retur QA-1): proses POST (generate token / approve) SEBELUM
+		// satu pun byte output — wp_safe_redirect butuh headers belum terkirim.
+		// Token plaintext hasil generate disimpan sementara untuk render.
+		$generated_token = null;
+		if ( 'plan' === $v['view'] && $v['plan'] > 0 && isset( $_POST['bcs_action'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- nonce diverifikasi dalam handler per aksi.
+			$plan_row_post = BCS_Plan_Builder::get_plan_row( $v['plan'] );
+			if ( $plan_row_post ) {
+				$generated_token = self::handle_plan_actions( $plan_row_post );
+			}
+		}
+
 		self::print_styles();
 
 		echo '<div class="wrap bcs-wrap">';
@@ -113,7 +124,7 @@ class BCS_Admin {
 		}
 
 		if ( 'plan' === $v['view'] && $v['plan'] > 0 ) {
-			self::render_plan( $v['plan'] );
+			self::render_plan( $v['plan'], $generated_token );
 		} elseif ( 'job' === $v['view'] && $v['job'] > 0 ) {
 			self::render_job( $v['job'] );
 		} elseif ( 'audit' === $v['view'] && $v['job'] > 0 ) {
@@ -319,10 +330,11 @@ class BCS_Admin {
 	/**
 	 * Diff preview plan.
 	 *
-	 * @param int $plan_id ID plan.
+	 * @param int         $plan_id        ID plan.
+	 * @param string|null $generated_token Token baru hasil POST (tampil sekali).
 	 * @return void
 	 */
-	private static function render_plan( $plan_id ) {
+	private static function render_plan( $plan_id, $generated_token = null ) {
 		$plan_row = BCS_Plan_Builder::get_plan_row( $plan_id );
 
 		if ( ! $plan_row ) {
@@ -464,8 +476,8 @@ class BCS_Admin {
 			return;
 		}
 
-		// Proses POST: generate token / approve langsung (nonce + cap di cek).
-		$token_to_show = self::handle_plan_actions( $plan_row );
+		// Token hasil POST sudah diproses sebelum output (MINOR-6 retur QA-1).
+		$token_to_show = $generated_token;
 
 		$token_status = BCS_Approval_Token::status( $plan_id );
 
@@ -538,12 +550,20 @@ class BCS_Admin {
 			$token = BCS_Approval_Token::generate( $plan_id, $plan_hash );
 
 			if ( is_wp_error( $token ) ) {
-				add_settings_error( 'bcs', 'token', $token->get_error_message() );
-				return null;
+				// NIT-5 (retur QA-1): settings_errors() tidak dirender di halaman
+				// menu kustom — pakai redirect notice yang sama dengan approve.
+				wp_safe_redirect(
+					add_query_arg(
+						'bcs_error',
+						rawurlencode( $token->get_error_message() ),
+						self::page_url( array( 'view' => 'plan', 'plan' => (string) $plan_id ) )
+					)
+				);
+				exit;
 			}
 
 			BCS_Audit_Logger::log_call(
-				'wp_admin', 'generate_token', 'ok',
+				'bcs/admin-screen', 'generate_token', 'ok',
 				sprintf(
 					/* translators: 1: plan id, 2: user id */
 					__( 'Token approval di-generate untuk plan #%1$d oleh user #%2$d.', 'bulk-catalog-studio' ),
@@ -582,10 +602,24 @@ class BCS_Admin {
 				exit;
 			}
 
-			$consume = BCS_Approval_Token::consume( $plan_id, get_current_user_id() );
+			// MAJOR-2 (retur QA-1): transisi atomik DULU (satu pemenang),
+			// baru konsumsi token atomik — sama dengan jalur MCP.
 			$transition = BCS_Job_Manager::transition( (int) $plan_row->job_id, 'approved', 'bcs/approve-plan' );
 
-			if ( ! is_wp_error( $consume ) && ! is_wp_error( $transition ) ) {
+			if ( is_wp_error( $transition ) ) {
+				wp_safe_redirect(
+					add_query_arg(
+						'bcs_error',
+						rawurlencode( $transition->get_error_message() ),
+						self::page_url( array( 'view' => 'plan', 'plan' => (string) $plan_id ) )
+					)
+				);
+				exit;
+			}
+
+			$consume = BCS_Approval_Token::consume( $plan_id, get_current_user_id() );
+
+			if ( ! is_wp_error( $consume ) ) {
 				BCS_Plan_Builder::set_status( $plan_id, 'approved' );
 
 				BCS_Audit_Logger::log_call(
@@ -610,7 +644,7 @@ class BCS_Admin {
 				exit;
 			}
 
-			$error_msg = is_wp_error( $transition ) ? $transition->get_error_message() : __( 'Gagal menandai plan approved.', 'bulk-catalog-studio' );
+			$error_msg = is_wp_error( $consume ) ? $consume->get_error_message() : __( 'Gagal menandai plan approved.', 'bulk-catalog-studio' );
 			wp_safe_redirect(
 				add_query_arg(
 					'bcs_error',
@@ -735,7 +769,7 @@ class BCS_Admin {
 
 		echo '<table class="widefat striped"><thead><tr>';
 		echo '<th>' . esc_html__( 'ID', 'bulk-catalog-studio' ) . '</th>';
-		echo '<th>' . esc_html__( 'Waktu (UTC)', 'bulk-catalog-studio' ) . '</th>';
+		echo '<th>' . esc_html__( 'Waktu', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'Level', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'Ability', 'bulk-catalog-studio' ) . '</th>';
 		echo '<th>' . esc_html__( 'Aksi', 'bulk-catalog-studio' ) . '</th>';
