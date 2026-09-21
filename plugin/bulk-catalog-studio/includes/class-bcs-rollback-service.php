@@ -194,9 +194,9 @@ class BCS_Rollback_Service {
 
 		BCS_Plan_Builder::set_status( $plan_id, 'rolled_back' );
 
-		$note = '' === implode( ' ', $notes )
-			? null
-			: implode( ' | ', $notes );
+		// Output schema menetapkan note sebagai string; gunakan string kosong saat
+		// rollback bersih agar validasi Abilities API tidak menolak hasil sukses.
+		$note = implode( ' | ', $notes );
 
 		BCS_Audit_Logger::log_call(
 			'bcs/rollback-batch', 'rollback_batch', 'ok',

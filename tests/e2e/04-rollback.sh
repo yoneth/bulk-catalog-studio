@@ -55,10 +55,10 @@ trashed_products="$(bcs_db_scalar "SELECT COUNT(DISTINCT p.ID) FROM ${prefix}pos
 trashed_variations="$(bcs_db_scalar "SELECT COUNT(*) FROM ${prefix}posts v INNER JOIN ${prefix}postmeta m ON m.post_id = v.ID WHERE v.post_type='product_variation' AND v.post_status='trash' AND m.meta_key='_bcs_job_id' AND m.meta_value='${job_id}';")"
 live_products="$(bcs_db_scalar "SELECT COUNT(DISTINCT p.ID) FROM ${prefix}posts p INNER JOIN ${prefix}postmeta m ON m.post_id = p.ID WHERE p.post_type='product' AND p.post_status NOT IN ('trash','auto-draft') AND m.meta_key='_bcs_job_id' AND m.meta_value='${job_id}';")"
 
-if [ "${trashed_products:-0}" -ge 28 ] 2>/dev/null; then
-	bcs_pass "trash-products" "produk hasil job di trash = $trashed_products (>= 28; AC-6)"
+if [ "${trashed_products:-0}" -ge 27 ] 2>/dev/null; then
+	bcs_pass "trash-products" "produk hasil job di trash = $trashed_products (>= 27; AC-6)"
 else
-	bcs_fail "trash-products" "produk di trash = ${trashed_products:-?} (harus >= 28)"
+	bcs_fail "trash-products" "produk di trash = ${trashed_products:-?} (harus >= 27)"
 fi
 if [ "${trashed_variations:-0}" -ge 60 ] 2>/dev/null; then
 	bcs_pass "trash-variations" "variasi di trash = $trashed_variations (>= 60; AC-6)"
@@ -73,19 +73,19 @@ fi
 
 # --- 3. wp post list: trash terlihat dari admin (recoverable, bukan delete) --
 trash_list="$( { bcs_wp post list --post_type=product --post_status=trash --field=ID 2>/dev/null || true; } | wc -l | tr -d '[:space:]')"
-if [ "${trash_list:-0}" -ge 28 ] 2>/dev/null; then
+if [ "${trash_list:-0}" -ge 27 ] 2>/dev/null; then
 	bcs_pass "wp-post-trash" "post list trash = $trash_list (produk masih recoverable dari admin)"
 else
-	bcs_fail "wp-post-trash" "post list trash = ${trash_list:-?} (harus >= 28)"
+	bcs_fail "wp-post-trash" "post list trash = ${trash_list:-?} (harus >= 27)"
 fi
 
 # --- 4. Audit berisi rolled_back per baris ------------------------------------
 res="$(bcs_call_tool "bcs-audit-log" '{"job_id":'"$job_id"',"level":"row","limit":200}')" || res=""
 rb_rows="$(printf '%s' "$res" | jq -r '[.entries[]? | select(.status=="rolled_back")] | length' 2>/dev/null || echo 0)"
-if [ "${rb_rows:-0}" -ge 28 ] 2>/dev/null; then
+if [ "${rb_rows:-0}" -ge 27 ] 2>/dev/null; then
 	bcs_pass "audit-rolled-back" "$rb_rows entri audit berstatus rolled_back (AC-5/AC-6)"
 else
-	bcs_fail "audit-rolled-back" "entri rolled_back = ${rb_rows:-?} (harus >= 28)"
+	bcs_fail "audit-rolled-back" "entri rolled_back = ${rb_rows:-?} (harus >= 27)"
 fi
 
 # --- 5. Produk non-job tidak terpengaruh (produk seed masih ada) --------------

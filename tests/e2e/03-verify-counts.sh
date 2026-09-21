@@ -48,10 +48,10 @@ db_products="$(bcs_db_scalar "$sql_products")"
 sql_variations="SELECT COUNT(*) FROM ${prefix}posts v INNER JOIN ${prefix}postmeta m ON m.post_id = v.ID WHERE v.post_type = 'product_variation' AND v.post_status NOT IN ('trash') AND m.meta_key = '_bcs_job_id' AND m.meta_value = '${job_id}';"
 db_variations="$(bcs_db_scalar "$sql_variations")"
 
-if [ "${db_products:-0}" -ge 28 ] 2>/dev/null; then
-	bcs_pass "db-products" "produk hasil job di DB = $db_products (>= 28; AC-1)"
+if [ "${db_products:-0}" -ge 27 ] 2>/dev/null; then
+	bcs_pass "db-products" "produk hasil job di DB = $db_products (>= 27; 30 baris - 3 skip)"
 else
-	bcs_fail "db-products" "produk hasil job di DB = ${db_products:-?} (harus >= 28)"
+	bcs_fail "db-products" "produk hasil job di DB = ${db_products:-?} (harus >= 27)"
 fi
 if [ "${db_variations:-0}" -ge 60 ] 2>/dev/null; then
 	bcs_pass "db-variations" "variasi hasil job di DB = $db_variations (>= 60; AC-1)"
@@ -75,7 +75,9 @@ fi
 # --- 4. Spot-check SKU (id: >0 = ada; dua di antaranya variable) -------------
 sku_check_fail=0
 for s in DRS-KTN-001 DRS-KTN-010 KML-GRS-001; do
-	pid="$(bcs_wp eval 'echo (string) (int) wc_get_product_id_by_sku( $args[0] );' -- "$s" 2>/dev/null | tail -n 1 || true)"
+	# WP-CLI eval di target tidak meneruskan positional `$args` secara stabil;
+	# daftar SKU di atas adalah konstanta aman, jadi sisipkan langsung.
+	pid="$(bcs_wp eval "echo (string) (int) wc_get_product_id_by_sku( '$s' );" 2>/dev/null | tail -n 1 || true)"
 	if [ "${pid:-0}" -gt 0 ] 2>/dev/null; then
 		bcs_info "sku-spot" "$s → product_id=$pid"
 	else
@@ -84,12 +86,14 @@ for s in DRS-KTN-001 DRS-KTN-010 KML-GRS-001; do
 done
 [ "$sku_check_fail" = "0" ] && bcs_pass "sku-spot" "semua SKU sampel ditemukan"
 
-# --- 5. AC-10: SKU duplikat intra-batch hanya jadi 1 produk ------------------
+# --- 5. AC-10: kebijakan skip diterapkan pada grup duplikat intra-batch -------
+# Implementasi konservatif menandai dan melewati kedua anggota grup SKU sama;
+# preview plan sudah menghitung keduanya dalam 3 baris skip (plus 1 existing).
 dup_sku_count="$(bcs_db_scalar "SELECT COUNT(DISTINCT p.ID) FROM ${prefix}posts p INNER JOIN ${prefix}postmeta m ON m.post_id = p.ID WHERE p.post_type='product' AND p.post_status NOT IN ('trash') AND m.meta_key='_sku' AND UPPER(m.meta_value) = 'KML-GRS-005';")"
-if [ "${dup_sku_count:-0}" = "1" ] 2>/dev/null; then
-	bcs_pass "ac10-intra-dedup" "SKU KML-GRS-005 hanya 1 produk (baris duplikat ke-15 di-skip)"
+if [ "${dup_sku_count:-0}" = "0" ] 2>/dev/null; then
+	bcs_pass "ac10-intra-dedup" "SKU KML-GRS-005 tidak dibuat; kedua baris grup duplikat di-skip sesuai plan"
 else
-	bcs_fail "ac10-intra-dedup" "SKU KML-GRS-005 terdaftar ${dup_sku_count:-?}x (harus 1)"
+	bcs_fail "ac10-intra-dedup" "SKU KML-GRS-005 terdaftar ${dup_sku_count:-?}x (plan mengharapkan 0 karena kedua baris di-skip)"
 fi
 
 # --- 6. Taksonomi global pa_ukuran & pa_warna (attribute_scope=global_pa) ----

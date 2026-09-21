@@ -622,6 +622,7 @@ if ( 28 !== $rb1['counts']['products_trashed'] ) {
 	echo 'counts: '; var_export( $rb1['counts'] ); echo "\n";
 }
 expect( 'T14 status rolled_back', 'rolled_back' === $rb1['status'] );
+expect( 'T14 note selalu string sesuai output schema', isset( $rb1['note'] ) && is_string( $rb1['note'] ) );
 $job = BCS_Job_Manager::get( $job_id );
 expect( 'T14 job rolled_back', 'rolled_back' === $job['status'] );
 $rb2 = BCS_Rollback_Service::rollback( $job_id, true, 'all' );
