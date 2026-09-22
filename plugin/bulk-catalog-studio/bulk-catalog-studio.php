@@ -80,7 +80,12 @@ function bcs_deactivate() {
 register_deactivation_hook( __FILE__, 'bcs_deactivate' );
 
 /**
- * Upgrade skema DB bila versi berubah (dipanggil di admin untuk keamanan).
+ * Upgrade skema DB bila versi berubah.
+ *
+ * Dipanggil di dua konteks: `admin_init` (request admin biasa) dan `cli_init`
+ * (WP-CLI). Konteks CLI wajib ikut karena worker sync dijalankan lewat system
+ * cron `wp bcs sync run-due` yang tidak pernah menyentuh admin_init — tanpa ini
+ * tabel sync baru tidak pernah ter-upgrade di jalur cron.
  *
  * @return void
  */
@@ -136,6 +141,7 @@ BCS_MCP_Server::init();
 
 /* WP-CLI sync worker registration — plugin tidak memasang WP-Cron. */
 if ( defined( 'WP_CLI' ) && WP_CLI ) {
+	add_action( 'cli_init', 'bcs_maybe_upgrade' );
 	add_action(
 		'cli_init',
 		function () {

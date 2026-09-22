@@ -46,6 +46,16 @@ class BCS_Sync_CLI {
 	/**
 	 * Run every active connection whose calculated due time is now.
 	 *
+	 * WP-CLI registers a class method under its own name, so without the
+	 * subcommand annotation this would only answer to `wp bcs sync run_due`, while the
+	 * spec, the runbook and the system cron job all call `wp bcs sync run-due`.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp bcs sync run-due
+	 *
+	 * @subcommand run-due
+	 *
 	 * @param array $args Positional arguments.
 	 * @param array $assoc_args Associative arguments.
 	 * @return void
@@ -80,6 +90,12 @@ class BCS_Sync_CLI {
 
 	/**
 	 * Fetch+parse only: wp bcs sync test-connection --connection-id=<id>.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp bcs sync test-connection --connection-id=1
+	 *
+	 * @subcommand test-connection
 	 *
 	 * @param array $args Positional arguments.
 	 * @param array $assoc_args Associative arguments.
