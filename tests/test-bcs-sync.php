@@ -300,6 +300,55 @@ expect_sync(
 	! is_wp_error( $dimension_diff ) && 0 === count( $dimension_diff['operations'] )
 );
 
+// name/description/short_description live on the post row, not in meta, and the
+// catalog record neither selected nor mapped them. payload_matches_record()
+// skips any field the record does not carry, so a sheet edit to the title or
+// description produced zero operations. The record below carries the raw post
+// columns, exactly as a WordPress row does, so the mapping is what makes them
+// comparable. The SELECT half of the fix needs a database and is verified live.
+$text_state = array(
+	'catalog_count' => 100,
+	'products'      => array(
+		'txt-1' => array(
+			'id'           => 504,
+			'sku'          => 'TXT-1',
+			'post_title'   => 'Kemeja Flanel Pria 01',
+			'post_content' => '<p>Deskripsi lama.</p>',
+			'post_excerpt' => 'Ringkasan lama.',
+			'regular_price' => '10',
+			'sync_hash'    => '',
+			'variations'   => array(),
+		),
+	),
+);
+$text_unchanged = BCS_Sync_Diff::diff(
+	array( array( 'sku' => 'TXT-1', 'name' => 'Kemeja Flanel Pria 01', 'description' => '<p>Deskripsi lama.</p>', 'short_description' => 'Ringkasan lama.', 'regular_price' => '10' ) ),
+	sync_connection(),
+	$text_state
+);
+expect_sync(
+	'unchanged name and description produce no operation',
+	! is_wp_error( $text_unchanged ) && 0 === count( $text_unchanged['operations'] )
+);
+$redescribed = BCS_Sync_Diff::diff(
+	array( array( 'sku' => 'TXT-1', 'name' => 'Kemeja Flanel Pria 01', 'description' => '<p>Deskripsi baru.</p>', 'short_description' => 'Ringkasan lama.', 'regular_price' => '10' ) ),
+	sync_connection(),
+	$text_state
+);
+expect_sync(
+	'a description edit in the sheet is detected as an update',
+	! is_wp_error( $redescribed ) && 1 === count( $redescribed['operations'] ) && 'update' === $redescribed['operations'][0]['op']
+);
+$reshortened = BCS_Sync_Diff::diff(
+	array( array( 'sku' => 'TXT-1', 'name' => 'Kemeja Flanel Pria 01', 'description' => '<p>Deskripsi lama.</p>', 'short_description' => 'Ringkasan baru.', 'regular_price' => '10' ) ),
+	sync_connection(),
+	$text_state
+);
+expect_sync(
+	'a short description edit in the sheet is detected as an update',
+	! is_wp_error( $reshortened ) && 1 === count( $reshortened['operations'] ) && 'update' === $reshortened['operations'][0]['op']
+);
+
 // Variable parent: WooCommerce keeps no price on the parent, so the parent's
 // own price must not be compared. Price is still compared on the variations.
 $variable_state = array(

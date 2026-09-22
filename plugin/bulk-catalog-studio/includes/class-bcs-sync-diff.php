@@ -478,7 +478,15 @@ class BCS_Sync_Diff {
 
 		$posts_table = isset( $wpdb->posts ) ? $wpdb->posts : $wpdb->prefix . 'posts';
 		$meta_table  = isset( $wpdb->postmeta ) ? $wpdb->postmeta : $wpdb->prefix . 'postmeta';
+		/*
+		 * post_title/post_content/post_excerpt are selected because
+		 * payload_matches_record() skips any field the record does not carry.
+		 * Without them a sheet edit to the name, description or short
+		 * description produced zero operations: the diff simply never looked at
+		 * those columns.
+		 */
 		$sql = "SELECT p.ID, p.post_parent, p.post_type, p.post_modified, p.post_modified_gmt,
+			p.post_title AS name, p.post_content AS description, p.post_excerpt AS short_description,
 			MAX(CASE WHEN pm.meta_key = '_sku' THEN pm.meta_value ELSE '' END) AS sku,
 			MAX(CASE WHEN pm.meta_key = '_regular_price' THEN pm.meta_value ELSE '' END) AS regular_price,
 			MAX(CASE WHEN pm.meta_key = '_sale_price' THEN pm.meta_value ELSE '' END) AS sale_price,
@@ -565,6 +573,8 @@ class BCS_Sync_Diff {
 			'parent_id'        => array( 'parent_id', 'post_parent' ),
 			'sku'              => array( 'sku' ),
 			'name'             => array( 'name', 'post_title' ),
+			'description'      => array( 'description', 'post_content' ),
+			'short_description' => array( 'short_description', 'post_excerpt' ),
 			'regular_price'    => array( 'regular_price', '_regular_price' ),
 			'sale_price'       => array( 'sale_price', '_sale_price' ),
 			'stock_quantity'   => array( 'stock_quantity', '_stock' ),
@@ -874,7 +884,21 @@ class BCS_Sync_Diff {
 			if ( ! array_key_exists( $field, $record ) ) {
 				continue;
 			}
-			if ( self::normalize_for_compare( $value ) !== self::normalize_for_compare( $record[ $field ] ) ) {
+			/*
+			 * The writer stores these through sanitize_text_field()/wp_kses_post(),
+			 * so the value that lands in WordPress is not always byte-identical to
+			 * the source. Comparing the raw source against the stored value would
+			 * report field_changed on every run for any row the sanitiser touches
+			 * — the same non-round-trip trap that stock and dimensions fell into.
+			 * Compare what the writer would actually store.
+			 */
+			$source_value = $value;
+			if ( 'name' === $field && function_exists( 'sanitize_text_field' ) ) {
+				$source_value = sanitize_text_field( (string) $value );
+			} elseif ( in_array( $field, array( 'description', 'short_description' ), true ) && function_exists( 'wp_kses_post' ) ) {
+				$source_value = wp_kses_post( (string) $value );
+			}
+			if ( self::normalize_for_compare( $source_value ) !== self::normalize_for_compare( $record[ $field ] ) ) {
 				return false;
 			}
 		}
