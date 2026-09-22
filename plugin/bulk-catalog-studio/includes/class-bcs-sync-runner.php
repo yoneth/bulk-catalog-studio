@@ -1131,6 +1131,12 @@ class BCS_Sync_Runner {
 				BCS_Catalog_Writer::set_sync_state( $child->get_id(), $hashes[ $key ], $connection_id );
 			}
 		}
+
+		// Writing the children makes WooCommerce re-sync the parent, which bumps
+		// the parent's post_modified past the snapshot taken when the parent
+		// itself was written. Re-snapshot it here, once every child is done, or
+		// every variable product reports a conflict on the next run.
+		BCS_Catalog_Writer::snapshot_post_modified( absint( $product_id ) );
 	}
 
 	/**
@@ -1144,6 +1150,41 @@ class BCS_Sync_Runner {
 		$key = isset( $operation['operation_key'] ) ? (string) $operation['operation_key'] : '';
 		if ( '' !== $key && class_exists( 'BCS_Audit_Logger' ) && BCS_Audit_Logger::has_row_success( $run_id, $key, 'sync' ) ) {
 			return true;
+		}
+		/*
+		 * The audit check above is the resume guard proper: it is scoped to this
+		 * run and proves the write already succeeded inside it. The sync-hash
+		 * check below is a weaker secondary signal and must not overrule the
+		 * diff.
+		 *
+		 * The diff decides by comparing fields against live WordPress state;
+		 * the hash check decides by comparing the source row's hash with the
+		 * hash stored at the last successful write. When a field fails to
+		 * round-trip into WordPress the two disagree permanently: the diff
+		 * reports field_changed on every run because WP still differs, while
+		 * the hash check reports "already applied" because the source never
+		 * changed. The operation is then proposed forever and executed never,
+		 * the run never converges, and the thresholds trip every time. Stock
+		 * did exactly this while manage_stock stayed off.
+		 *
+		 * So when the diff has explicitly said the fields differ, trust the
+		 * diff. Crash resume is unaffected: an operation that already succeeded
+		 * in this run is still skipped by the audit check above.
+		 */
+		$reason = isset( $operation['reason'] ) ? (string) $operation['reason'] : '';
+		if ( 'field_changed' === $reason ) {
+			return false;
+		}
+		/*
+		 * A conflict is raised by drift on the WordPress side, not in the
+		 * source, so a matching source hash says nothing about whether the flag
+		 * has been written. Letting the shortcut fire here meant
+		 * _bcs_conflict_flag was never set for a manually edited product: the
+		 * diff reported the conflict on every run and the flag was written on
+		 * none of them.
+		 */
+		if ( 'conflict' === (string) ( isset( $operation['op'] ) ? $operation['op'] : '' ) ) {
+			return false;
 		}
 		$hash = isset( $operation['sync_hash'] ) ? (string) $operation['sync_hash'] : '';
 		if ( '' === $hash || ! function_exists( 'get_post_meta' ) ) {

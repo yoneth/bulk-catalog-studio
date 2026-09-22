@@ -478,13 +478,14 @@ class BCS_Sync_Diff {
 
 		$posts_table = isset( $wpdb->posts ) ? $wpdb->posts : $wpdb->prefix . 'posts';
 		$meta_table  = isset( $wpdb->postmeta ) ? $wpdb->postmeta : $wpdb->prefix . 'postmeta';
-		$sql = "SELECT p.ID, p.post_parent, p.post_type, p.post_modified,
+		$sql = "SELECT p.ID, p.post_parent, p.post_type, p.post_modified, p.post_modified_gmt,
 			MAX(CASE WHEN pm.meta_key = '_sku' THEN pm.meta_value ELSE '' END) AS sku,
 			MAX(CASE WHEN pm.meta_key = '_regular_price' THEN pm.meta_value ELSE '' END) AS regular_price,
 			MAX(CASE WHEN pm.meta_key = '_sale_price' THEN pm.meta_value ELSE '' END) AS sale_price,
 			MAX(CASE WHEN pm.meta_key = '_stock' THEN pm.meta_value ELSE '' END) AS stock_quantity,
 			MAX(CASE WHEN pm.meta_key = '_bcs_sync_hash' THEN pm.meta_value ELSE '' END) AS sync_hash,
 			MAX(CASE WHEN pm.meta_key = '_bcs_synced_at' THEN pm.meta_value ELSE '' END) AS synced_at,
+			MAX(CASE WHEN pm.meta_key = '_bcs_sync_post_modified' THEN pm.meta_value ELSE '' END) AS sync_post_modified,
 			MAX(CASE WHEN pm.meta_key = '_bcs_connection_id' THEN pm.meta_value ELSE '' END) AS connection_id
 			FROM {$posts_table} p
 			LEFT JOIN {$meta_table} pm ON pm.post_id = p.ID
@@ -569,6 +570,8 @@ class BCS_Sync_Diff {
 			'stock_quantity'   => array( 'stock_quantity', '_stock' ),
 			'manage_stock'     => array( 'manage_stock', '_manage_stock' ),
 			'post_modified'    => array( 'post_modified' ),
+			'post_modified_gmt' => array( 'post_modified_gmt' ),
+			'sync_post_modified' => array( 'sync_post_modified', '_bcs_sync_post_modified' ),
 			'synced_at'        => array( 'synced_at', '_bcs_synced_at' ),
 			'sync_hash'        => array( 'sync_hash', '_bcs_sync_hash' ),
 			'connection_id'    => array( 'connection_id', '_bcs_connection_id' ),
@@ -820,9 +823,22 @@ class BCS_Sync_Diff {
 	 * @return bool
 	 */
 	private static function payload_matches_record( array $payload, array $record ) {
+		/*
+		 * A variable parent holds no price of its own in WooCommerce: its price
+		 * is derived from the variations, so _regular_price/_sale_price stay
+		 * empty on the parent post. Comparing the source's parent-level price
+		 * against that empty value reports field_changed on every run and the
+		 * sync can never converge. Price is still compared where it actually
+		 * lives, on each variation.
+		 */
+		$is_variable_parent = ! empty( $record['variations'] ) && is_array( $record['variations'] );
+
 		foreach ( $payload as $field => $value ) {
 			if ( 'variations' === $field ) {
 				// Variation keys are diffed independently below.
+				continue;
+			}
+			if ( $is_variable_parent && in_array( $field, array( 'regular_price', 'sale_price' ), true ) ) {
 				continue;
 			}
 			if ( in_array( $field, array( 'sku', 'attributes', 'categories', 'tags', 'image_id', 'image_url', 'image_alt', 'seo_title', 'seo_description' ), true ) ) {
@@ -836,6 +852,17 @@ class BCS_Sync_Diff {
 				}
 			}
 			if ( 'dimensions' === $field && is_array( $value ) ) {
+				/*
+				 * Same rule as every other field below: a record that does not
+				 * expose dimensions cannot be compared on them. Without this
+				 * guard the branch compared each source dimension against null,
+				 * so every product with dimensions reported field_changed on
+				 * every run and the sync could never converge. The catalog
+				 * record built from SQL does not select dimensions at all.
+				 */
+				if ( ! array_key_exists( 'dimensions', $record ) ) {
+					continue;
+				}
 				$current_dimensions = isset( $record['dimensions'] ) && is_array( $record['dimensions'] ) ? $record['dimensions'] : array();
 				foreach ( $value as $dimension => $dimension_value ) {
 					if ( self::normalize_scalar( isset( $current_dimensions[ $dimension ] ) ? $current_dimensions[ $dimension ] : null ) !== self::normalize_scalar( $dimension_value ) ) {
@@ -861,6 +888,24 @@ class BCS_Sync_Diff {
 	 * @return bool
 	 */
 	private static function is_conflict( array $record ) {
+		/*
+		 * Preferred path: compare the product's current post_modified_gmt with
+		 * the snapshot the last sync write left behind
+		 * (BCS_Catalog_Writer::snapshot_post_modified). Comparing against
+		 * _bcs_synced_at instead reports every synced product as conflicted,
+		 * because storing _bcs_synced_at bumps post_modified after that
+		 * timestamp is taken, and a variable product's parent is bumped again
+		 * when WooCommerce syncs its variations. Both sides of this comparison
+		 * are GMT, so no timezone coercion is needed.
+		 */
+		$snapshot = isset( $record['sync_post_modified'] ) ? trim( (string) $record['sync_post_modified'] ) : '';
+		if ( '' !== $snapshot ) {
+			$modified_gmt  = isset( $record['post_modified_gmt'] ) ? strtotime( (string) $record['post_modified_gmt'] . ' UTC' ) : false;
+			$snapshot_time = strtotime( $snapshot . ' UTC' );
+			return false !== $modified_gmt && false !== $snapshot_time && $modified_gmt > $snapshot_time;
+		}
+
+		// Records written before the snapshot existed keep the original check.
 		$post_modified = isset( $record['post_modified'] ) ? strtotime( (string) $record['post_modified'] . ' UTC' ) : false;
 		$synced_at     = isset( $record['synced_at'] ) ? strtotime( (string) $record['synced_at'] . ' UTC' ) : false;
 		return false !== $post_modified && false !== $synced_at && $post_modified > $synced_at;

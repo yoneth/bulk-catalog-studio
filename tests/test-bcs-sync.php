@@ -36,9 +36,21 @@ function get_post_meta( $id, $key, $single = true ) {
 	$product = wc_get_product( $id );
 	return $product ? $product->get_meta( $key, $single, 'edit' ) : '';
 }
+function get_post_field( $field, $id ) {
+	$product = wc_get_product( $id );
+	if ( ! $product || ! isset( $product->props[ $field ] ) ) {
+		return '';
+	}
+	return (string) $product->props[ $field ];
+}
 function get_post( $id ) { return null; }
 function get_term_by( $field, $value, $taxonomy ) { return false; }
-function wp_insert_term( $name, $taxonomy, $args = array() ) { return array( 'term_id' => 1, 'slug' => sanitize_key( $name ) ); }
+function wp_insert_term( $name, $taxonomy, $args = array() ) {
+	// Remember which taxonomy each term was created in; ensure_term() used to
+	// route product_tag into the pa_ attribute namespace.
+	$GLOBALS['bcs_inserted_terms'][] = array( 'name' => $name, 'taxonomy' => $taxonomy );
+	return array( 'term_id' => 1, 'slug' => sanitize_key( $name ) );
+}
 function get_terms( $args ) { return array(); }
 function wc_delete_product_transients( $id ) {}
 function wc_format_decimal( $value ) { return (string) ( 0 + str_replace( ',', '', (string) $value ) ); }
@@ -50,6 +62,12 @@ function wc_get_product_id_by_sku( $sku ) {
 	return null;
 }
 function taxonomy_exists( $taxonomy ) { return false; }
+function sanitize_title( $value ) { return strtolower( trim( preg_replace( '/[^A-Za-z0-9]+/', '-', (string) $value ), '-' ) ); }
+function wp_list_pluck( $list, $field ) {
+	$out = array();
+	foreach ( (array) $list as $item ) { $out[] = is_array( $item ) ? ( $item[ $field ] ?? null ) : ( $item->$field ?? null ); }
+	return $out;
+}
 function register_taxonomy( $taxonomy, $objects, $args ) {}
 function wc_attribute_taxonomy_id_by_name( $slug ) { return 1; }
 function wc_create_attribute( $args ) { return 1; }
@@ -257,6 +275,80 @@ $missing = BCS_Sync_Diff::diff( array( array( 'sku' => 'SKU-1', 'name' => 'Item'
 expect_sync( 'one missing SKU is flagged', ! is_wp_error( $missing ) && 1 === $missing['summary']['flag_missing'] );
 $guard = BCS_Sync_Diff::diff( array( array( 'sku' => 'SKU-1', 'name' => 'Item', 'regular_price' => '10' ) ), sync_connection( array( 'policy' => array( 'seen_skus' => array( 'SKU-1', 'SKU-2', 'SKU-3', 'SKU-4', 'SKU-5' ) ) ) ), $base_state );
 expect_sync( 'more than 20 percent missing aborts', is_wp_error( $guard ) && 'missing_rows_guard' === $guard->get_error_code() );
+/*
+ * Convergence regressions. A source that has not changed must produce no
+ * operations on a second run. Each case below is a field that could not
+ * round-trip into WordPress, so the diff reported field_changed forever, the
+ * run never converged and the thresholds tripped on every scheduled run.
+ */
+
+// Dimensions: the catalog record built from SQL does not expose them, so they
+// must be skipped like every other field the record does not carry.
+$dimension_state = array(
+	'catalog_count' => 100,
+	'products'      => array(
+		'dim-1' => array( 'id' => 501, 'sku' => 'DIM-1', 'regular_price' => '10', 'sync_hash' => '', 'variations' => array() ),
+	),
+);
+$dimension_diff = BCS_Sync_Diff::diff(
+	array( array( 'sku' => 'DIM-1', 'regular_price' => '10', 'dimensions' => array( 'length' => '30', 'width' => '25', 'height' => '3' ) ) ),
+	sync_connection(),
+	$dimension_state
+);
+expect_sync(
+	'unchanged source with dimensions produces no operation',
+	! is_wp_error( $dimension_diff ) && 0 === count( $dimension_diff['operations'] )
+);
+
+// Variable parent: WooCommerce keeps no price on the parent, so the parent's
+// own price must not be compared. Price is still compared on the variations.
+$variable_state = array(
+	'catalog_count' => 100,
+	'products'      => array(
+		'var-parent' => array(
+			'id'            => 502,
+			'sku'           => 'VAR-PARENT',
+			'regular_price' => '',
+			'sync_hash'     => '',
+			'variations'    => array(
+				'var-child' => array( 'id' => 503, 'sku' => 'VAR-CHILD', 'regular_price' => '190000', 'parent_id' => 502 ),
+			),
+		),
+	),
+);
+$variable_diff = BCS_Sync_Diff::diff(
+	array( array( 'sku' => 'VAR-PARENT', 'regular_price' => '190000', 'variations' => array( array( 'sku' => 'VAR-CHILD', 'regular_price' => '190000' ) ) ) ),
+	sync_connection(),
+	$variable_state
+);
+expect_sync(
+	'variable parent price is not compared against its empty parent value',
+	! is_wp_error( $variable_diff ) && 0 === count( $variable_diff['operations'] )
+);
+
+// ...but a real price change on the variation itself must still be caught.
+$variable_changed = BCS_Sync_Diff::diff(
+	array( array( 'sku' => 'VAR-PARENT', 'regular_price' => '190000', 'variations' => array( array( 'sku' => 'VAR-CHILD', 'regular_price' => '250000' ) ) ) ),
+	sync_connection(),
+	$variable_state
+);
+expect_sync(
+	'a variation price change is still detected',
+	! is_wp_error( $variable_changed ) && count( $variable_changed['operations'] ) > 0
+);
+
+// Tags must be created in product_tag itself. ensure_term() normalized every
+// taxonomy through attribute_taxonomy(), which always prefixes 'pa_', so
+// 'product_tag' became 'pa_product_tag': set_tag_ids() then received an id that
+// was not a product_tag and tags silently never landed on the product.
+$GLOBALS['bcs_inserted_terms'] = array();
+$tag_term = BCS_Catalog_Writer::ensure_term( 'product_tag', 'flanel' );
+$tag_taxonomies = wp_list_pluck( $GLOBALS['bcs_inserted_terms'], 'taxonomy' );
+expect_sync(
+	'ensure_term creates a tag in product_tag, not in the pa_ namespace',
+	! is_wp_error( $tag_term ) && in_array( 'product_tag', $tag_taxonomies, true ) && ! in_array( 'pa_product_tag', $tag_taxonomies, true )
+);
+
 $duplicate = BCS_Sync_Diff::diff( array( array( 'sku' => 'SKU-1' ), array( 'sku' => 'sku-1' ) ), sync_connection(), array( 'catalog_count' => 100, 'products' => array() ) );
 expect_sync( 'duplicate SKU aborts', is_wp_error( $duplicate ) && 'duplicate_sku' === $duplicate->get_error_code() );
 $many_rows = array(); for ( $i = 1; $i <= 51; $i++ ) { $many_rows[] = array( 'sku' => 'SKU-' . $i, 'name' => 'Item ' . $i, 'regular_price' => '10' ); }
@@ -310,6 +402,72 @@ if ( ! is_wp_error( $connection_id ) ) {
 	$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => $connection_id, 'run_trigger' => 'manual', 'state' => 'applying', 'diff_hash' => sha1( 'run' ), 'diff_summary' => wp_json_encode( array( 'summary' => array(), 'operations' => array( $operation ), 'quarantine' => array(), 'seen_skus' => array() ) ), 'started_at' => gmdate( 'Y-m-d H:i:s', time() - 700 ), 'heartbeat_at' => gmdate( 'Y-m-d H:i:s', time() - 700 ) ) );
 	$resume = BCS_Sync_Runner::run( $connection_id, 'manual' );
 	expect_sync( 'stale applying run resumes idempotently', ! is_wp_error( $resume ) && 'done' === $resume['status'] );
+}
+
+/*
+ * Regression: the diff and the apply layer must not contradict each other.
+ *
+ * The apply layer may short-circuit an operation whose source hash still
+ * matches the hash stored at the last successful write. That shortcut is only
+ * legitimate against duplicate work inside one run; it must never overrule the
+ * diff. When a field fails to round-trip into WordPress, the diff reports
+ * field_changed on every run while the hash keeps matching, and the operation
+ * would be proposed forever and executed never — the run could not converge and
+ * the thresholds would trip every time. Stock did exactly that while
+ * manage_stock stayed off.
+ */
+$contradiction_connection = BCS_Sync_Connection::insert( array( 'name' => 'Hash contradiction', 'status' => 'active', 'sheet_config' => array( 'spreadsheet_id' => 'sheet-id', 'gid' => '0' ), 'column_mapping' => array( 'name' => 'name', 'sku' => 'sku', 'regular_price' => 'regular_price' ) ) );
+if ( ! is_wp_error( $contradiction_connection ) ) {
+	$stale_hash = sha1( 'unchanged-source-row' );
+
+	// (a) field_changed with an identical hash must still be written.
+	$drifted = new WC_Product();
+	$drifted->set_sku( 'DRIFT-1' );
+	$drifted->set_name( 'Drifted item' );
+	$drifted->set_regular_price( '100' );
+	$drifted->update_meta_data( '_bcs_sync_hash', $stale_hash );
+	$drifted_id = $drifted->save();
+	$drift_operation = array( 'op' => 'update', 'sku' => 'DRIFT-1', 'variation_sku' => null, 'payload' => array( 'sku' => 'DRIFT-1', 'regular_price' => '250' ), 'before' => array( 'id' => $drifted_id ), 'reason' => 'field_changed', 'sync_hash' => $stale_hash, 'operation_key' => sha1( 'drift-key' ), 'target_product_id' => $drifted_id );
+	$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => $contradiction_connection, 'run_trigger' => 'manual', 'state' => 'applying', 'diff_hash' => sha1( 'drift' ), 'diff_summary' => wp_json_encode( array( 'summary' => array(), 'operations' => array( $drift_operation ), 'quarantine' => array(), 'seen_skus' => array() ) ), 'started_at' => gmdate( 'Y-m-d H:i:s', time() - 700 ), 'heartbeat_at' => gmdate( 'Y-m-d H:i:s', time() - 700 ) ) );
+	$drift_resume = BCS_Sync_Runner::run( $contradiction_connection, 'manual' );
+	expect_sync(
+		'field_changed is applied even when the stored sync hash still matches',
+		! is_wp_error( $drift_resume ) && '250' === (string) $GLOBALS['bcs_products'][ $drifted_id ]->get_regular_price()
+	);
+
+	// (a2) a conflict is WP-side drift, so a matching source hash must not skip it.
+	$conflicted = new WC_Product();
+	$conflicted->set_sku( 'CONFLICT-1' );
+	$conflicted->set_name( 'Conflicted item' );
+	$conflicted->set_regular_price( '170000' );
+	$conflicted->update_meta_data( '_bcs_sync_hash', $stale_hash );
+	$conflicted_id = $conflicted->save();
+	$conflict_operation = array( 'op' => 'conflict', 'sku' => 'CONFLICT-1', 'variation_sku' => null, 'payload' => array( 'sku' => 'CONFLICT-1', 'regular_price' => '159000' ), 'before' => array( 'id' => $conflicted_id ), 'reason' => 'manual_edit_conflict', 'sync_hash' => $stale_hash, 'operation_key' => sha1( 'conflict-key' ), 'target_product_id' => $conflicted_id );
+	$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => $contradiction_connection, 'run_trigger' => 'manual', 'state' => 'applying', 'diff_hash' => sha1( 'conflict' ), 'diff_summary' => wp_json_encode( array( 'summary' => array(), 'operations' => array( $conflict_operation ), 'quarantine' => array(), 'seen_skus' => array() ) ), 'started_at' => gmdate( 'Y-m-d H:i:s', time() - 700 ), 'heartbeat_at' => gmdate( 'Y-m-d H:i:s', time() - 700 ) ) );
+	BCS_Sync_Runner::run( $contradiction_connection, 'manual' );
+	expect_sync(
+		'a conflict flag is written even when the stored sync hash still matches',
+		'' !== (string) $GLOBALS['bcs_products'][ $conflicted_id ]->get_meta( '_bcs_conflict_flag', true, 'edit' )
+		&& '170000' === (string) $GLOBALS['bcs_products'][ $conflicted_id ]->get_regular_price()
+	);
+
+	// (b) an operation already recorded as successful in this run stays skipped.
+	$resumed = new WC_Product();
+	$resumed->set_sku( 'RESUME-1' );
+	$resumed->set_name( 'Resumed item' );
+	$resumed->set_regular_price( '100' );
+	$resumed->update_meta_data( '_bcs_sync_hash', $stale_hash );
+	$resumed_id = $resumed->save();
+	$resume_key = sha1( 'resume-key' );
+	$resume_operation = array( 'op' => 'update', 'sku' => 'RESUME-1', 'variation_sku' => null, 'payload' => array( 'sku' => 'RESUME-1', 'regular_price' => '250' ), 'before' => array( 'id' => $resumed_id ), 'reason' => 'field_changed', 'sync_hash' => $stale_hash, 'operation_key' => $resume_key, 'target_product_id' => $resumed_id );
+	$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => $contradiction_connection, 'run_trigger' => 'manual', 'state' => 'applying', 'diff_hash' => sha1( 'resume' ), 'diff_summary' => wp_json_encode( array( 'summary' => array(), 'operations' => array( $resume_operation ), 'quarantine' => array(), 'seen_skus' => array() ) ), 'started_at' => gmdate( 'Y-m-d H:i:s', time() - 700 ), 'heartbeat_at' => gmdate( 'Y-m-d H:i:s', time() - 700 ) ) );
+	$resume_run_id = $GLOBALS['wpdb']->insert_id;
+	BCS_Audit_Logger::log_row( 'bcs/sync-run', 'update_product', 'ok', 0, 'RESUME-1', $resumed_id, 'sync', $resume_key, $resume_run_id, 0, 'sync', 'sync' );
+	BCS_Sync_Runner::run( $contradiction_connection, 'manual' );
+	expect_sync(
+		'an operation already logged ok in this run is not written twice',
+		'100' === (string) $GLOBALS['bcs_products'][ $resumed_id ]->get_regular_price()
+	);
 }
 
 if ( $fail > 0 ) { echo "\n$fail TESTS FAILED\n"; exit( 1 ); }

@@ -318,6 +318,13 @@ class BCS_Catalog_Writer {
 		}
 		if ( array_key_exists( 'stock_quantity', $payload ) && null !== $payload['stock_quantity'] ) {
 			$quantity = (int) $payload['stock_quantity'];
+			// Same reason as apply_scalar_fields(): a quantity is ignored while
+			// manage_stock is off, and the variation create path already turns it on.
+			if ( ! array_key_exists( 'manage_stock', $payload ) ) {
+				$variation->set_manage_stock( true );
+			} else {
+				$variation->set_manage_stock( (bool) $payload['manage_stock'] );
+			}
 			$variation->set_stock_quantity( $quantity );
 			$variation->set_stock_status( $quantity > 0 ? 'instock' : 'outofstock' );
 		}
@@ -397,7 +404,40 @@ class BCS_Catalog_Writer {
 		$object->update_meta_data( '_bcs_connection_id', absint( $connection_id ) );
 		$object->update_meta_data( '_bcs_conflict_flag', '' );
 		$object->save();
+		self::snapshot_post_modified( $object->get_id() );
 		return true;
+	}
+
+	/**
+	 * Record the post_modified_gmt a sync write left behind.
+	 *
+	 * Conflict detection used to compare post_modified against _bcs_synced_at,
+	 * but the save() that stores _bcs_synced_at bumps post_modified itself, and
+	 * for a variable product WooCommerce bumps the parent again when it syncs
+	 * the variations. Every synced product therefore looked manually edited on
+	 * the next run. Snapshotting the timestamp the write actually produced
+	 * removes that false positive without loosening detection of real human
+	 * edits: anything that touches the product afterwards still moves
+	 * post_modified past the snapshot. A time-based grace period would not be
+	 * deterministic, so it is deliberately not used.
+	 *
+	 * The meta is written with update_post_meta() rather than through the CRUD
+	 * object on purpose — a raw meta write does not touch post_modified, so the
+	 * snapshot cannot invalidate itself.
+	 *
+	 * @param int $object_id Product or variation ID.
+	 * @return void
+	 */
+	public static function snapshot_post_modified( $object_id ) {
+		$object_id = absint( $object_id );
+		if ( $object_id < 1 || ! function_exists( 'get_post_field' ) || ! function_exists( 'update_post_meta' ) ) {
+			return;
+		}
+		$modified = get_post_field( 'post_modified_gmt', $object_id );
+		if ( ! is_string( $modified ) || '' === $modified ) {
+			return;
+		}
+		update_post_meta( $object_id, '_bcs_sync_post_modified', $modified );
 	}
 
 	/**
@@ -733,6 +773,18 @@ class BCS_Catalog_Writer {
 			$product->set_manage_stock( (bool) $payload['manage_stock'] );
 		}
 		if ( isset( $payload['stock_quantity'] ) ) {
+			/*
+			 * WooCommerce drops a stock quantity while manage_stock is off, so
+			 * without this the value never lands: _stock stays empty and every
+			 * later sync run compares the source quantity against an empty WP
+			 * value, reports field_changed and proposes the very same update
+			 * again — the sync can never converge. A payload that carries a
+			 * quantity therefore implies stock management, unless the payload
+			 * said otherwise explicitly. The variation writer already does this.
+			 */
+			if ( ! isset( $payload['manage_stock'] ) ) {
+				$product->set_manage_stock( true );
+			}
 			$product->set_stock_quantity( absint( $payload['stock_quantity'] ) );
 			$product->set_stock_status( absint( $payload['stock_quantity'] ) > 0 ? 'instock' : 'outofstock' );
 		}
@@ -860,9 +912,23 @@ class BCS_Catalog_Writer {
 	 * @return array|WP_Error { term_id, slug }
 	 */
 	public static function ensure_term( $taxonomy, $name ) {
-		// Normalisasi via attribute_taxonomy() (bukan sanitize_title yang
-		// mengubah underscore menjadi dash dan memutus format pa_ukuran).
-		$taxonomy = BCS_CSV_Parser::attribute_taxonomy( $taxonomy );
+		/*
+		 * Only attribute taxonomies go through attribute_taxonomy(): it always
+		 * returns a 'pa_'-prefixed slug, so passing a core taxonomy through it
+		 * turned 'product_tag' into 'pa_product_tag'. The whitelist below then
+		 * never matched product_tag, and the term was created in an attribute
+		 * taxonomy instead. set_tag_ids() received an id that is not a
+		 * product_tag, so tags silently never landed on the product and every
+		 * later sync run saw the source tags against an empty WP value and
+		 * proposed the same update again. Categories escaped this because they
+		 * go through ensure_category_chain(), not ensure_term().
+		 */
+		$taxonomy = trim( (string) $taxonomy );
+		if ( ! in_array( $taxonomy, array( 'product_cat', 'product_tag' ), true ) ) {
+			// Normalisasi via attribute_taxonomy() (bukan sanitize_title yang
+			// mengubah underscore menjadi dash dan memutus format pa_ukuran).
+			$taxonomy = BCS_CSV_Parser::attribute_taxonomy( $taxonomy );
+		}
 		$name     = trim( (string) $name );
 
 		// Whitelist taxonomy (spec §5.5.3).
