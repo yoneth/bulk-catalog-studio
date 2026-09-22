@@ -25,8 +25,13 @@ bcs_require_wp || bcs_finish
 connection_id="$(bcs_state_get '.connection_id // ""')"
 original_url="$(bcs_state_get '.original_csv_url // ""')"
 original_gid="$(bcs_state_get '.original_csv_gid // "0"')"
-conflict_sku="${BCS_SYNC_CONFLICT_SKU:-SYNC-001}"
-manual_price="${BCS_SYNC_CONFLICT_PRICE:-120}"
+conflict_sku="${BCS_SYNC_CONFLICT_SKU:-KML-GRS-001}"
+# Nilai edit manual harus BERBEDA dari sumber namun tetap DI DALAM ambang
+# price_delta_pct (80%), supaya operasinya diklasifikasikan sebagai conflict dan
+# bukan ditangkap lebih dulu oleh guard harga ekstrem. Fixture main memberi SKU
+# ini harga 159000; nilai lama 120 adalah penurunan 99,9% sehingga selalu
+# dikarantina dan langkah konflik tidak pernah teruji.
+manual_price="${BCS_SYNC_CONFLICT_PRICE:-170000}"
 [ -n "$connection_id" ] || { bcs_stop "state" "connection_id missing — run sync-01 first"; bcs_finish; }
 [ -n "$original_url" ] || { bcs_stop "state" "original source missing — run sync-01 first"; bcs_finish; }
 [ -n "${BCS_SYNC_CONN_ROLLBACK_URL:-}" ] || { bcs_stop "env" "BCS_SYNC_CONN_ROLLBACK_URL is required for S12"; bcs_finish; }
@@ -49,6 +54,50 @@ echo is_wp_error( $result ) ? "ERR:" . $result->get_error_message() : "OK";
 }
 
 sync_restore_source() { sync_update_source "$original_url" "$original_gid"; }
+
+# The rollback fixture is deliberately a small slice of the catalog, so it drops
+# far more than missing_row_flag_pct of the SKUs seen so far and would be stopped
+# by the missing-row guard (class-bcs-sync-diff.php:289-299) before it could
+# produce the update this step needs. Lift that one threshold for the duration of
+# the run, the way sync-04 lifts the operation-count thresholds for its own
+# fixture, and put the original value back immediately afterwards. The saved
+# value lives in state so a resumed run still restores it.
+missing_guard_relax() {
+	local saved
+	saved="$(bcs_wp eval '
+$c = BCS_Sync_Connection::get( (int) $args[0] );
+if ( ! is_array( $c ) ) { echo "ERR:not-found"; exit; }
+echo wp_json_encode( $c["thresholds"] );
+' -- "$connection_id" 2>/dev/null | tail -n 1 || true)"
+	printf '%s' "$saved" | jq -e 'has("missing_row_flag_pct")' >/dev/null 2>&1 || return 1
+	bcs_state_set rollback_saved_thresholds "$saved"
+	local output
+	output="$(bcs_wp eval '
+$id = (int) $args[0];
+$c = BCS_Sync_Connection::get( $id );
+$t = $c["thresholds"];
+$t["missing_row_flag_pct"] = 100;
+$r = BCS_Sync_Connection::update( $id, array( "thresholds" => $t, "status" => "active" ) );
+echo is_wp_error( $r ) ? "ERR:" . $r->get_error_message() : "OK";
+' -- "$connection_id" 2>/dev/null | tail -n 1 || true)"
+	[ "$output" = "OK" ]
+}
+
+missing_guard_restore() {
+	local saved output
+	saved="$(bcs_state_get '.rollback_saved_thresholds // ""')"
+	[ -n "$saved" ] || return 0
+	output="$(bcs_wp eval '
+$id = (int) $args[0];
+$t = json_decode( (string) $args[1], true );
+if ( ! is_array( $t ) ) { echo "ERR:state"; exit; }
+$r = BCS_Sync_Connection::update( $id, array( "thresholds" => $t, "status" => "active" ) );
+echo is_wp_error( $r ) ? "ERR:" . $r->get_error_message() : "OK";
+' -- "$connection_id" "$saved" 2>/dev/null | tail -n 1 || true)"
+	[ "$output" = "OK" ] || return 1
+	bcs_state_set rollback_saved_thresholds ""
+}
+
 sync_latest_json() { bcs_wp eval '$r=BCS_Sync_Runner::latest_run((int)$args[0]); echo wp_json_encode($r ? $r : array());' -- "$connection_id" 2>/dev/null | tail -n 1; }
 run_once() { bcs_wp bcs sync run --connection-id="$connection_id" >/tmp/bcs-sync-e2e-last-cli.txt 2>&1 || true; }
 
@@ -67,7 +116,12 @@ if(!$p instanceof WC_Product){echo "ERR:not-product";exit;}
 $p->set_regular_price($price); $saved=$p->save();
 $future=gmdate("Y-m-d H:i:s",time()+120);
 global $wpdb;
-$wpdb->query($wpdb->prepare("UPDATE {$wpdb->posts} SET post_modified=%s WHERE ID=%d",$future,$id));
+// WordPress selalu menulis post_modified DAN post_modified_gmt pada setiap
+// penyuntingan. Deteksi konflik membandingkan post_modified_gmt dengan snapshot
+// yang ditinggalkan sync, jadi simulasi edit manual yang hanya menyentuh
+// post_modified tidak akan pernah terdeteksi — dan itu cacat kesetiaan simulasi,
+// bukan kelonggaran deteksi.
+$wpdb->query($wpdb->prepare("UPDATE {$wpdb->posts} SET post_modified=%s, post_modified_gmt=%s WHERE ID=%d",$future,$future,$id));
 echo $saved ? "OK" : "ERR:save";
 ' -- "$product_id" "$manual_price" 2>/dev/null | tail -n 1 || true)"
 	if [ "$manual_result" = "OK" ]; then
@@ -90,7 +144,7 @@ if [ "$conflict_stage" = "" ]; then
 	latest="$(sync_latest_json)"
 	state="$(jget "$latest" '.state')"
 	diff_summary="$(jget "$latest" '.diff_summary')"
-	conflicts="$(printf '%s' "$diff_summary" | jq -r 'fromjson | [.operations[]? | select(.op=="conflict")] | length' 2>/dev/null || echo 0)"
+	conflicts="$(printf '%s' "$diff_summary" | jq -r '(if type=="string" then fromjson else . end) | [.operations[]? | select(.op=="conflict")] | length' 2>/dev/null || echo 0)"
 	flag="$(bcs_wp eval 'echo (string)get_post_meta((int)$args[0],"_bcs_conflict_flag",true);' -- "$product_id" 2>/dev/null | tail -n 1 || true)"
 	wp_price="$(bcs_wp eval '$p=wc_get_product((int)$args[0]); echo $p ? (string)$p->get_regular_price("edit") : "";' -- "$product_id" 2>/dev/null | tail -n 1 || true)"
 	if [ "$state" = "done" ] && [ "${conflicts:-0}" -ge 1 ] 2>/dev/null && [ -n "$flag" ] && [ "$wp_price" = "$manual_price" ]; then
@@ -126,11 +180,18 @@ if [ "$conflict_stage" = "acknowledged" ]; then
 	before_rollback_price="$(bcs_wp eval '$p=wc_get_product((int)$args[0]); echo $p ? (string)$p->get_regular_price("edit") : "";' -- "$product_id" 2>/dev/null | tail -n 1 || true)"
 	bcs_state_set before_rollback_price "$before_rollback_price"
 	sync_update_source "$BCS_SYNC_CONN_ROLLBACK_URL" "${BCS_SYNC_CONN_ROLLBACK_GID:-0}" || { bcs_stop "rollback-source" "could not set rollback fixture"; bcs_finish; }
+	if missing_guard_relax; then
+		bcs_info "rollback-guard-relax" "missing_row_flag_pct raised to 100 for the rollback fixture run only"
+	else
+		bcs_stop "rollback-guard-relax" "could not lift the missing-row guard for the rollback fixture"
+		bcs_finish
+	fi
 	run_once
+	missing_guard_restore || { bcs_stop "rollback-guard-restore" "could not restore the original thresholds"; bcs_finish; }
 	latest="$(sync_latest_json)"
 	state="$(jget "$latest" '.state')"
 	diff_summary="$(jget "$latest" '.diff_summary')"
-	updates="$(printf '%s' "$diff_summary" | jq -r 'fromjson | ((.summary.update // 0)+(.summary.update_variation // 0))' 2>/dev/null || echo 0)"
+	updates="$(printf '%s' "$diff_summary" | jq -r '(if type=="string" then fromjson else . end) | ((.summary.update // 0)+(.summary.update_variation // 0))' 2>/dev/null || echo 0)"
 	rollback_run_id="$(jget "$latest" '.id')"
 	if [ "$state" = "done" ] && [ "${updates:-0}" -ge 1 ] 2>/dev/null; then
 		bcs_pass "rollback-source-run" "latest update run #$rollback_run_id done with $updates update operation(s)"
@@ -173,6 +234,7 @@ if [ "$conflict_stage" = "rolled_back" ]; then
 	fi
 fi
 
+missing_guard_restore || { bcs_stop "restore-thresholds" "failed to restore the original thresholds"; bcs_finish; }
 sync_restore_source || { bcs_stop "restore-original-source" "failed to restore original source after conflict/rollback tests"; bcs_finish; }
 bcs_state_set conflict_rollback_complete "1"
 bcs_finish

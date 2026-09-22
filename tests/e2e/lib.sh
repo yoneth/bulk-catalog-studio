@@ -84,7 +84,33 @@ bcs_finish() {
 # ---------------------------------------------------------------------------
 # WP-CLI (hanya untuk pra-cek lokal di VPS; alur MCP custom tidak lewat sini)
 # ---------------------------------------------------------------------------
-bcs_wp() { "$BCS_WP_BIN" --path="$BCS_WP_ROOT" "$@"; }
+# `wp eval` menerima HANYA kode PHP. Argumen posisional yang mengisi $args
+# adalah fitur `wp eval-file` (diverifikasi pada WP-CLI 2.12.0), sehingga
+# pemanggilan `wp eval '<code>' -- a b` gagal dengan "Too many positional
+# arguments" dan seluruh skrip sync berhenti di langkah pertamanya. Rute
+# pemanggilan yang membawa argumen ke eval-file lewat berkas sementara, supaya
+# pola $args[...] di semua skrip tetap berlaku tanpa perlu diubah satu per satu.
+bcs_wp() {
+	if [ "${1:-}" != "eval" ]; then
+		"$BCS_WP_BIN" --path="$BCS_WP_ROOT" "$@"
+		return $?
+	fi
+	shift
+	local code="${1:-}"
+	shift || true
+	[ "${1:-}" != "--" ] || shift
+	if [ "$#" -eq 0 ]; then
+		"$BCS_WP_BIN" --path="$BCS_WP_ROOT" eval "$code"
+		return $?
+	fi
+	local file status
+	file="$(mktemp "${TMPDIR:-/tmp}/bcs-eval-XXXXXX.php")"
+	printf '<?php\n%s\n' "$code" > "$file"
+	"$BCS_WP_BIN" --path="$BCS_WP_ROOT" eval-file "$file" "$@"
+	status=$?
+	rm -f "$file"
+	return $status
+}
 
 bcs_table_prefix() { bcs_wp db prefix 2>/dev/null | tail -n 1 || true; }
 

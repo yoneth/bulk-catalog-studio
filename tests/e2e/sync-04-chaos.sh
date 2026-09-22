@@ -118,7 +118,11 @@ fi
 
 # --- 3. No duplicate owned SKU and restore connection config -----------------
 if [ "$chaos_stage" = "done" ]; then
-	duplicate_skus="$(bcs_db_scalar "SELECT COUNT(*) FROM (SELECT sku.meta_value FROM ${prefix}postmeta sku INNER JOIN ${prefix}postmeta owner ON owner.post_id=sku.post_id AND owner.meta_key='_bcs_connection_id' AND owner.meta_value='${connection_id}' WHERE sku.meta_key='_sku' AND sku.meta_value <> '' GROUP BY sku.meta_value HAVING COUNT(*) > 1) AS duplicate_skus;")"
+	# Hanya post HIDUP yang boleh dihitung. Produk yang sudah di-trash tetap
+	# menyandang _sku dan _bcs_connection_id, jadi tanpa filter status setiap
+	# SKU dari impor sebelumnya akan berpasangan dengan SKU yang baru dibuat dan
+	# tampak sebagai duplikat — padahal katalog hidupnya bersih.
+	duplicate_skus="$(bcs_db_scalar "SELECT COUNT(*) FROM (SELECT sku.meta_value FROM ${prefix}postmeta sku INNER JOIN ${prefix}posts p ON p.ID=sku.post_id AND p.post_status NOT IN ('trash','auto-draft') INNER JOIN ${prefix}postmeta owner ON owner.post_id=sku.post_id AND owner.meta_key='_bcs_connection_id' AND owner.meta_value='${connection_id}' WHERE sku.meta_key='_sku' AND sku.meta_value <> '' GROUP BY sku.meta_value HAVING COUNT(*) > 1) AS duplicate_skus;")"
 	if [ "${duplicate_skus:-0}" = "0" ]; then
 		bcs_pass "chaos-no-duplicate-sku" "SQL GROUP BY/HAVING found no duplicate owned SKU"
 	else

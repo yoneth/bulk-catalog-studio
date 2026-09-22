@@ -26,7 +26,11 @@ bcs_require_wp || bcs_finish
 
 jget() { printf '%s' "$1" | jq -r "$2 // empty" 2>/dev/null || true; }
 
-mapping_default='{"Nama":"name","SKU":"sku","Harga":"regular_price","Stok":"stock_quantity"}'
+# Spec §3.1(c) mewajibkan jumlah kolom header SAMA DENGAN jumlah kolom mapping —
+# guard schema drift. Mapping karena itu harus memetakan SELURUH 22 kolom fixture,
+# bukan sekadar beberapa kolom yang menarik; mapping parsial ditolak fetcher
+# dengan error schema_mismatch sebelum satu baris pun diparse.
+mapping_default='{"Nama":"name","Deskripsi":"description","Ringkasan":"short_description","SKU":"sku","Harga":"regular_price","Harga Diskon":"sale_price","Stok":"stock_quantity","Berat(kg)":"weight","P":"length","L":"width","T":"height","Kategori":"categories","Tag":"tags","Ukuran":"attribute:pa_ukuran","Warna":"attribute:pa_warna","SKU Variasi":"variation_sku","Harga Variasi":"variation_regular_price","Stok Variasi":"variation_stock_quantity","URL Gambar":"image_url","Alt Gambar":"image_alt","SEO Title":"seo_title","SEO Desc":"seo_description"}'
 mapping="${BCS_SYNC_CONN_CSV_MAPPING:-$mapping_default}"
 if ! printf '%s' "$mapping" | jq -e 'type == "object"' >/dev/null 2>&1; then
 	bcs_stop "mapping" "BCS_SYNC_CONN_CSV_MAPPING must be a JSON object"
