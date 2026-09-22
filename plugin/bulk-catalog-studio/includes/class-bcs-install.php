@@ -158,7 +158,7 @@ class BCS_Install {
 		$sql_runs   = "CREATE TABLE {$runs_table} (
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 			connection_id BIGINT UNSIGNED NOT NULL,
-			trigger VARCHAR(8) NOT NULL DEFAULT 'manual',
+			run_trigger VARCHAR(16) NOT NULL DEFAULT 'manual',
 			state VARCHAR(20) NOT NULL DEFAULT 'pending',
 			diff_hash CHAR(40) NULL DEFAULT NULL,
 			diff_summary LONGTEXT NULL,

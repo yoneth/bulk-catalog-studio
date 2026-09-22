@@ -219,7 +219,7 @@ $GLOBALS['wpdb']->lock_result = 1;
 
 /* Full token lifecycle. */
 $diff_hash = sha1( 'sync-diff' );
-$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 4, 'trigger' => 'manual', 'state' => 'awaiting_approval', 'diff_hash' => $diff_hash, 'diff_summary' => wp_json_encode( array( 'summary' => array(), 'quarantine' => array() ) ), 'token_hash' => null, 'token_expires_at' => null, 'token_used_at' => null, 'approved_by' => null, 'approved_at' => null ) );
+$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 4, 'run_trigger' => 'manual', 'state' => 'awaiting_approval', 'diff_hash' => $diff_hash, 'diff_summary' => wp_json_encode( array( 'summary' => array(), 'quarantine' => array() ) ), 'token_hash' => null, 'token_expires_at' => null, 'token_used_at' => null, 'approved_by' => null, 'approved_at' => null ) );
 $run_id = $GLOBALS['wpdb']->insert_id;
 $token = BCS_Sync_Runner::generate_run_token( $run_id );
 expect_sync_mcp( 'run token is generated in BCS format', is_string( $token ) && 12 === strlen( $token ) && 1 === preg_match( '/^BCS-[A-Z2-9]{8}$/', $token ) );
@@ -230,7 +230,7 @@ expect_sync_mcp( 'token approval transitions the run', ! is_wp_error( $approved 
 $replay = BCS_Sync_Runner::approve_run( $run_id, $diff_hash, $token, 9 );
 expect_sync_mcp( 'replay is rejected as token_used', is_wp_error( $replay ) && 'bcs_token_used' === $replay->get_error_code() );
 
-$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 4, 'trigger' => 'manual', 'state' => 'awaiting_approval', 'diff_hash' => $diff_hash, 'diff_summary' => '{}' , 'token_hash' => null, 'token_expires_at' => null, 'token_used_at' => null ) );
+$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 4, 'run_trigger' => 'manual', 'state' => 'awaiting_approval', 'diff_hash' => $diff_hash, 'diff_summary' => '{}' , 'token_hash' => null, 'token_expires_at' => null, 'token_used_at' => null ) );
 $wrong_hash_run = $GLOBALS['wpdb']->insert_id;
 $wrong_token = BCS_Sync_Runner::generate_run_token( $wrong_hash_run );
 expect_sync_mcp( 'wrong diff_hash is rejected explicitly', is_wp_error( BCS_Sync_Runner::verify_run_token( $wrong_hash_run, sha1( 'other' ), $wrong_token ) ) && 'diff_hash_mismatch' === BCS_Sync_Runner::verify_run_token( $wrong_hash_run, sha1( 'other' ), $wrong_token )->get_error_code() );
@@ -243,7 +243,7 @@ $quarantine = array(
 		array( 'sku' => 'BAD-2', 'reason' => 'price_delta_exceeded', 'payload' => array( 'sku' => 'BAD-2', 'name' => 'Two' ), 'before' => array( 'id' => 402 ) ),
 	),
 );
-$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 4, 'trigger' => 'manual', 'state' => 'done', 'diff_hash' => sha1( 'q' ), 'diff_summary' => wp_json_encode( $quarantine ) ) );
+$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 4, 'run_trigger' => 'manual', 'state' => 'done', 'diff_hash' => sha1( 'q' ), 'diff_summary' => wp_json_encode( $quarantine ) ) );
 $qrun = $GLOBALS['wpdb']->insert_id;
 $discard = BCS_Sync_Runner::resolve_quarantine( $qrun, 'BAD-1', 'discard' );
 $apply   = BCS_Sync_Runner::resolve_quarantine( $qrun, 'BAD-2', 'apply' );
@@ -260,7 +260,7 @@ $conflict_product->meta['_bcs_conflict_flag'] = '2026-01-01 00:00:00';
 $GLOBALS['bcs_wc_products'][701] = $conflict_product;
 $source_payload = array( 'sku' => 'CONFLICT-1', 'name' => 'Sheet value', 'regular_price' => '99' );
 $source_operation = array( 'op' => 'conflict', 'sku' => 'CONFLICT-1', 'variation_sku' => null, 'payload' => $source_payload, 'before' => array( 'id' => 701 ), 'reason' => 'manual_edit_conflict', 'sync_hash' => sha1( wp_json_encode( $source_payload ) ), 'target_product_id' => 701 );
-$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 4, 'trigger' => 'manual', 'state' => 'done', 'diff_hash' => sha1( 'conflict-run' ), 'diff_summary' => wp_json_encode( array( 'operations' => array( $source_operation ), 'summary' => array( 'conflict' => 1 ) ) ) ) );
+$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 4, 'run_trigger' => 'manual', 'state' => 'done', 'diff_hash' => sha1( 'conflict-run' ), 'diff_summary' => wp_json_encode( array( 'operations' => array( $source_operation ), 'summary' => array( 'conflict' => 1 ) ) ) ) );
 $conflict_result = BCS_Sync_Runner::resolve_conflict( 701, 'sheet_wins' );
 $captured_operation = end( $GLOBALS['bcs_writer_operations'] );
 expect_sync_mcp( 'Sheet wins reapplies the persisted conflict payload', ! is_wp_error( $conflict_result ) && is_array( $captured_operation ) && 'Sheet value' === $captured_operation['payload']['name'] );

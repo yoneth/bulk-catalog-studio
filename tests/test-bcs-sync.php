@@ -284,11 +284,11 @@ $soft_deleted_variation = BCS_Catalog_Writer::soft_delete_variation( $parent_id,
 expect_sync( 'soft_delete_variation trashes the matching child', true === $soft_deleted_variation && 'trash' === $GLOBALS['bcs_products'][ $variation_id ]->props['status'] );
 
 /* Runner state and audit source. */
-$run_insert = $GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 7, 'trigger' => 'manual', 'state' => 'pending', 'started_at' => gmdate( 'Y-m-d H:i:s' ) ) );
+$run_insert = $GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 7, 'run_trigger' => 'manual', 'state' => 'pending', 'started_at' => gmdate( 'Y-m-d H:i:s' ) ) );
 $run_id = $GLOBALS['wpdb']->insert_id;
 expect_sync( 'valid runner transition succeeds', true === BCS_Sync_Runner::transition( $run_id, 'pending', 'fetching' ) );
 expect_sync( 'invalid runner transition is rejected', is_wp_error( BCS_Sync_Runner::transition( $run_id, 'pending', 'done' ) ) );
-$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 777, 'trigger' => 'manual', 'state' => 'awaiting_approval', 'diff_hash' => sha1( 'approved-diff' ), 'diff_summary' => wp_json_encode( array( 'summary' => array(), 'operations' => array() ) ), 'token_hash' => null, 'token_expires_at' => null, 'token_used_at' => null, 'approved_by' => null, 'approved_at' => null, 'started_at' => gmdate( 'Y-m-d H:i:s' ) ) );
+$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => 777, 'run_trigger' => 'manual', 'state' => 'awaiting_approval', 'diff_hash' => sha1( 'approved-diff' ), 'diff_summary' => wp_json_encode( array( 'summary' => array(), 'operations' => array() ) ), 'token_hash' => null, 'token_expires_at' => null, 'token_used_at' => null, 'approved_by' => null, 'approved_at' => null, 'started_at' => gmdate( 'Y-m-d H:i:s' ) ) );
 $approval_run_id = $GLOBALS['wpdb']->insert_id;
 expect_sync( 'approval rejects a mismatched diff hash', is_wp_error( BCS_Sync_Runner::approve_run( $approval_run_id, sha1( 'other-diff' ) ) ) );
 $approval_token = BCS_Sync_Runner::generate_run_token( $approval_run_id );
@@ -307,7 +307,7 @@ $connection_id = BCS_Sync_Connection::insert( array( 'name' => 'Runner test', 's
 if ( ! is_wp_error( $connection_id ) ) {
 	$existing = new WC_Product(); $existing->set_sku( 'RUN-1' ); $existing->set_name( 'Run item' ); $existing->update_meta_data( '_bcs_sync_hash', sha1( 'same' ) ); $existing_id = $existing->save();
 	$operation = array( 'op' => 'update', 'sku' => 'RUN-1', 'variation_sku' => null, 'payload' => array( 'sku' => 'RUN-1' ), 'before' => array( 'id' => $existing_id ), 'reason' => 'field_changed', 'sync_hash' => sha1( 'same' ), 'operation_key' => sha1( 'run-key' ), 'target_product_id' => $existing_id );
-	$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => $connection_id, 'trigger' => 'manual', 'state' => 'applying', 'diff_hash' => sha1( 'run' ), 'diff_summary' => wp_json_encode( array( 'summary' => array(), 'operations' => array( $operation ), 'quarantine' => array(), 'seen_skus' => array() ) ), 'started_at' => gmdate( 'Y-m-d H:i:s', time() - 700 ), 'heartbeat_at' => gmdate( 'Y-m-d H:i:s', time() - 700 ) ) );
+	$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array( 'connection_id' => $connection_id, 'run_trigger' => 'manual', 'state' => 'applying', 'diff_hash' => sha1( 'run' ), 'diff_summary' => wp_json_encode( array( 'summary' => array(), 'operations' => array( $operation ), 'quarantine' => array(), 'seen_skus' => array() ) ), 'started_at' => gmdate( 'Y-m-d H:i:s', time() - 700 ), 'heartbeat_at' => gmdate( 'Y-m-d H:i:s', time() - 700 ) ) );
 	$resume = BCS_Sync_Runner::run( $connection_id, 'manual' );
 	expect_sync( 'stale applying run resumes idempotently', ! is_wp_error( $resume ) && 'done' === $resume['status'] );
 }

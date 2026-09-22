@@ -1252,7 +1252,7 @@ class BCS_Sync_Runner {
 		$now   = self::now_mysql();
 		$data  = array(
 			'connection_id'     => absint( $connection_id ),
-			'trigger'           => $trigger,
+			'run_trigger'      => $trigger,
 			'state'             => 'pending',
 			'diff_hash'         => null,
 			'diff_summary'      => null,
@@ -1285,7 +1285,7 @@ class BCS_Sync_Runner {
 	 */
 	private static function update_run( $run_id, array $fields ) {
 		global $wpdb;
-		$allowed = array( 'connection_id', 'trigger', 'state', 'diff_hash', 'diff_summary', 'token_hash', 'token_expires_at', 'token_used_at', 'approved_by', 'approved_at', 'fetched_rows', 'error_code', 'error_note', 'started_at', 'finished_at', 'heartbeat_at' );
+		$allowed = array( 'connection_id', 'run_trigger', 'state', 'diff_hash', 'diff_summary', 'token_hash', 'token_expires_at', 'token_used_at', 'approved_by', 'approved_at', 'fetched_rows', 'error_code', 'error_note', 'started_at', 'finished_at', 'heartbeat_at' );
 		$data = array();
 		foreach ( $fields as $key => $value ) {
 			if ( in_array( $key, $allowed, true ) ) {
@@ -1341,7 +1341,7 @@ class BCS_Sync_Runner {
 		return array(
 			'id'               => (int) ( isset( $row['id'] ) ? $row['id'] : 0 ),
 			'connection_id'    => (int) ( isset( $row['connection_id'] ) ? $row['connection_id'] : 0 ),
-			'trigger'          => (string) ( isset( $row['trigger'] ) ? $row['trigger'] : '' ),
+			'trigger'          => (string) ( isset( $row['run_trigger'] ) ? $row['run_trigger'] : '' ),
 			'state'            => (string) ( isset( $row['state'] ) ? $row['state'] : '' ),
 			'diff_hash'        => isset( $row['diff_hash'] ) ? $row['diff_hash'] : null,
 			'diff_summary'     => isset( $row['diff_summary'] ) ? $row['diff_summary'] : null,
