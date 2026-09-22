@@ -398,10 +398,20 @@ export BCS_SYNC_CONN_DELETE_GID=0
 export BCS_SYNC_CONN_ROLLBACK_GID=0
 export BCS_SYNC_CONN_CHAOS_GID=0
 
-# Jika CSV fixture tidak memakai SKU SYNC-001, pilih SKU yang sudah tersinkron.
-export BCS_SYNC_CONFLICT_SKU='SYNC-001'
+# SKU yang diedit manual sync-03 untuk memancing konflik. Wajib ada di fixture
+# main DAN rollback. Default skrip kini KML-GRS-001; ubah hanya bila fixture
+# diganti.
+export BCS_SYNC_CONFLICT_SKU='KML-GRS-001'
 export BCS_SYNC_CONFLICT_PRICE='120'
 ```
+
+Nilai GID dan URL untuk fixture Google Sheets tidak perlu disusun tangan.
+`gen-sync-env.sh` memverifikasi keenam tab sel-per-sel lawan fixture publik di
+`https://cf.djavaweb.com/bcs-e2e/` lalu menulis blok `BCS_SYNC_CONN_*` di atas;
+ia menolak menulis env bila ada satu tab saja yang tidak cocok. Perbandingannya
+harus sampai ke level sel karena `price` dan `delete` punya jumlah baris yang
+sama persis dengan `main`, dan angka dibandingkan sebagai nilai — Sheets menulis
+ulang `0.30` menjadi `0.3` saat ekspor, dan itu bukan cacat fixture.
 
 Jangan menaruh Application Password, service-account JSON, private key, atau URL
 bertoken ke file skrip/state/commit. Kredensial Sheets API untuk unit test lokal
@@ -445,6 +455,17 @@ sementara operasi lain tetap berjalan, serta 11 delete eksplisit yang harus tert
 memastikan conflict flag dibuat tanpa menimpa harga WP, mengakui resolusi *keep WP*,
 menjalankan fixture update, rollback hanya run terbaru, lalu memastikan rollback run
 lama ditolak. Sumber asli dipulihkan pada akhir skrip.
+
+Fixture `rollback` sengaja hanya memuat sebagian kecil katalog, sehingga ia
+menghilangkan jauh lebih dari `missing_row_flag_pct` SKU yang sudah terlihat dan akan
+dihentikan guard baris hilang sebelum sempat menghasilkan update yang dibutuhkan
+langkah ini. Karena itu `sync-03` menaikkan `missing_row_flag_pct` koneksi menjadi
+100 **hanya** selama run fixture rollback — mengikuti pola `sync-04` yang menaikkan
+threshold jumlah operasi untuk fixture-nya sendiri — lalu memulihkan nilai aslinya
+persis setelah run. Nilai asli disimpan di state, dan ada pemulihan defensif di akhir
+skrip, sehingga run yang di-resume pun tidak meninggalkan koneksi dengan guard
+longgar. Nilai 100 aman karena guard memakai `missing_pct > threshold` sedangkan
+`missing_pct` maksimum 100.
 
 `sync-04` menaikkan threshold hanya pada koneksi fixture, menjalankan worker di
 background, melakukan `SIGKILL` setelah 3 detik, mempercepat heartbeat menjadi stale
