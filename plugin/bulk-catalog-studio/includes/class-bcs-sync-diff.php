@@ -156,7 +156,38 @@ class BCS_Sync_Diff {
 				$product_hash = self::hash_for_payload( $product_payload );
 				$changed      = self::record_changed( $product_payload, $existing, $product_hash );
 				if ( $changed ) {
-					if ( self::is_conflict( $existing ) ) {
+					/*
+					 * Three-way classification. is_conflict() alone is not enough:
+					 * WooCommerce touches a product asynchronously after a write
+					 * (lookup tables, variation resync), so post_modified drifts
+					 * past the snapshot without any owned field changing. That
+					 * drift is harmless on its own — an unchanged source produces
+					 * no operation at all — but as soon as a legitimate sheet edit
+					 * arrives, the drift made the run classify it as a manual
+					 * conflict and the edit could never apply.
+					 *
+					 * The source hash tells the two apart: it covers the source
+					 * row only. A hash that still matches the one stored at the
+					 * last successful write means the sheet has not moved, so any
+					 * difference against WordPress came from a human. A hash that
+					 * differs means the sheet moved, and a one-way sync applies it.
+					 *
+					 * An unacknowledged conflict flag still wins over both. The
+					 * spec locks conflict handling to flag_only — manual edits are
+					 * skipped and flagged, never overwritten — so a sheet edit
+					 * must not silently bury an edit a human has not yet resolved.
+					 * Resolving it through sheet_wins/keep_wp is the acknowledgement,
+					 * and sync resumes from there.
+					 */
+					$flag_active = isset( $existing['conflict_flag'] ) && '' !== trim( (string) $existing['conflict_flag'] );
+					// Only positive evidence downgrades a conflict to an update:
+					// a stored hash that no longer matches proves the sheet moved.
+					// With no stored hash there is nothing to compare, so the
+					// conservative reading wins and the record stays flagged.
+					$source_moved = isset( $existing['sync_hash'] )
+						&& '' !== (string) $existing['sync_hash']
+						&& ! hash_equals( (string) $existing['sync_hash'], (string) $product_hash );
+					if ( $flag_active || ( self::is_conflict( $existing ) && ! $source_moved ) ) {
 						$operations[] = self::operation(
 							'conflict',
 							$sku,
@@ -494,7 +525,8 @@ class BCS_Sync_Diff {
 			MAX(CASE WHEN pm.meta_key = '_bcs_sync_hash' THEN pm.meta_value ELSE '' END) AS sync_hash,
 			MAX(CASE WHEN pm.meta_key = '_bcs_synced_at' THEN pm.meta_value ELSE '' END) AS synced_at,
 			MAX(CASE WHEN pm.meta_key = '_bcs_sync_post_modified' THEN pm.meta_value ELSE '' END) AS sync_post_modified,
-			MAX(CASE WHEN pm.meta_key = '_bcs_connection_id' THEN pm.meta_value ELSE '' END) AS connection_id
+			MAX(CASE WHEN pm.meta_key = '_bcs_connection_id' THEN pm.meta_value ELSE '' END) AS connection_id,
+			MAX(CASE WHEN pm.meta_key = '_bcs_conflict_flag' THEN pm.meta_value ELSE '' END) AS conflict_flag
 			FROM {$posts_table} p
 			LEFT JOIN {$meta_table} pm ON pm.post_id = p.ID
 			WHERE p.post_type IN ('product','product_variation')

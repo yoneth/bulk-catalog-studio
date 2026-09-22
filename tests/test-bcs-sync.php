@@ -31,7 +31,13 @@ function wp_json_encode( $value, $flags = 0 ) { return json_encode( $value, $fla
 function current_time( $type, $gmt = 0 ) { return gmdate( 'Y-m-d H:i:s' ); }
 function get_option( $name, $default = false ) { return $default; }
 function wp_kses_post( $value ) { return (string) $value; }
-function update_post_meta( $id, $key, $value ) { return true; }
+function update_post_meta( $id, $key, $value ) {
+	// Records the meta WITHOUT calling save(), mirroring WordPress: a raw meta
+	// write does not touch post_modified.
+	$product = wc_get_product( $id );
+	if ( $product ) { $product->meta[ $key ] = $value; }
+	return true;
+}
 function get_post_meta( $id, $key, $single = true ) {
 	$product = wc_get_product( $id );
 	return $product ? $product->get_meta( $key, $single, 'edit' ) : '';
@@ -183,7 +189,15 @@ class WC_Product {
 		if ( 0 === strpos( $method, 'get_' ) ) { $key = substr( $method, 4 ); return isset( $this->props[ $key ] ) ? $this->props[ $key ] : null; }
 		return null;
 	}
-	public function save() { if ( empty( $this->props['id'] ) ) { $this->props['id'] = ++$GLOBALS['bcs_wc_next_id']; } $GLOBALS['bcs_products'][ $this->props['id'] ] = $this; return $this->props['id']; }
+	public function save() {
+		if ( empty( $this->props['id'] ) ) { $this->props['id'] = ++$GLOBALS['bcs_wc_next_id']; }
+		// WordPress bumps post_modified on every save; the fake does too so a
+		// regression can tell a CRUD save apart from a raw meta write.
+		$GLOBALS['bcs_fake_clock'] = ( $GLOBALS['bcs_fake_clock'] ?? 0 ) + 1;
+		$this->props['post_modified_gmt'] = gmdate( 'Y-m-d H:i:s', 1800000000 + $GLOBALS['bcs_fake_clock'] );
+		$GLOBALS['bcs_products'][ $this->props['id'] ] = $this;
+		return $this->props['id'];
+	}
 	public function get_id() { return (int) ( $this->props['id'] ?? 0 ); }
 	public function get_type() { return 'simple'; }
 	public function get_children( $context = 'edit' ) { return (array) ( $this->props['children'] ?? array() ); }
@@ -275,6 +289,82 @@ $missing = BCS_Sync_Diff::diff( array( array( 'sku' => 'SKU-1', 'name' => 'Item'
 expect_sync( 'one missing SKU is flagged', ! is_wp_error( $missing ) && 1 === $missing['summary']['flag_missing'] );
 $guard = BCS_Sync_Diff::diff( array( array( 'sku' => 'SKU-1', 'name' => 'Item', 'regular_price' => '10' ) ), sync_connection( array( 'policy' => array( 'seen_skus' => array( 'SKU-1', 'SKU-2', 'SKU-3', 'SKU-4', 'SKU-5' ) ) ) ), $base_state );
 expect_sync( 'more than 20 percent missing aborts', is_wp_error( $guard ) && 'missing_rows_guard' === $guard->get_error_code() );
+/*
+ * Conflict classification. WooCommerce touches a product asynchronously after a
+ * write, so post_modified drifts past the snapshot with no owned field changing.
+ * That drift is harmless alone, but it used to turn the next legitimate sheet
+ * edit into a manual conflict that could never apply.
+ */
+$drift_hash = sha1( 'source-row-as-last-synced' );
+$drift_product = array(
+	'id'                 => 601,
+	'sku'                => 'DRIFT-SKU',
+	'name'               => 'Dress Katun Melati 10',
+	'regular_price'      => '10',
+	'sync_hash'          => $drift_hash,
+	'post_modified'      => '2026-01-02 00:00:00',
+	'post_modified_gmt'  => '2026-01-02 00:00:00',
+	'sync_post_modified' => '2026-01-01 00:00:00',
+	'conflict_flag'      => '',
+	'variations'         => array(),
+);
+$drift_state = array( 'catalog_count' => 100, 'products' => array( 'drift-sku' => $drift_product ) );
+
+// (a) the sheet moved while the product had drifted: a real edit, not a conflict.
+$sheet_edit = BCS_Sync_Diff::diff(
+	array( array( 'sku' => 'DRIFT-SKU', 'name' => 'Edited — Dress Katun Melati 10', 'regular_price' => '10' ) ),
+	sync_connection(),
+	$drift_state
+);
+expect_sync(
+	'a sheet edit on a drifted product applies instead of raising a conflict',
+	! is_wp_error( $sheet_edit ) && 1 === count( $sheet_edit['operations'] ) && 'update' === $sheet_edit['operations'][0]['op']
+);
+
+// (b) the source stood still and WordPress moved: a human edited the product.
+$still_source = $drift_state;
+$still_source['products']['drift-sku']['name'] = 'Diedit tangan di WP';
+$still_source['products']['drift-sku']['sync_hash'] = BCS_Sync_Diff::payload_hash( array( 'sku' => 'DRIFT-SKU', 'name' => 'Dress Katun Melati 10', 'regular_price' => '10' ) );
+$manual_edit = BCS_Sync_Diff::diff(
+	array( array( 'sku' => 'DRIFT-SKU', 'name' => 'Dress Katun Melati 10', 'regular_price' => '10' ) ),
+	sync_connection(),
+	$still_source
+);
+expect_sync(
+	'an unchanged source against a changed record is still a conflict',
+	! is_wp_error( $manual_edit ) && 1 === count( $manual_edit['operations'] ) && 'conflict' === $manual_edit['operations'][0]['op']
+);
+
+// (c) an unresolved flag outranks a sheet edit: flag_only must not be bypassed.
+$flagged_state = $drift_state;
+$flagged_state['products']['drift-sku']['conflict_flag'] = '2026-01-02 00:00:00';
+$sheet_edit_while_flagged = BCS_Sync_Diff::diff(
+	array( array( 'sku' => 'DRIFT-SKU', 'name' => 'Edited — Dress Katun Melati 10', 'regular_price' => '10' ) ),
+	sync_connection(),
+	$flagged_state
+);
+expect_sync(
+	'a sheet edit does not overwrite a conflict a human has not resolved',
+	! is_wp_error( $sheet_edit_while_flagged ) && 1 === count( $sheet_edit_while_flagged['operations'] ) && 'conflict' === $sheet_edit_while_flagged['operations'][0]['op']
+);
+
+// Flagging a conflict must not move post_modified. Conflict detection compares
+// post_modified against the snapshot the last sync write left behind, so a flag
+// written through the CRUD object pushed post_modified past the snapshot and
+// re-raised the very same conflict on every following run — a conflict that
+// perpetuated itself and blocked the product forever.
+$flagged = new WC_Product();
+$flagged->set_sku( 'FLAG-1' );
+$flagged->set_name( 'Flagged item' );
+$flagged_id = $flagged->save();
+$modified_before_flag = (string) $GLOBALS['bcs_products'][ $flagged_id ]->props['post_modified_gmt'];
+BCS_Catalog_Writer::flag_sync_conflict( $flagged_id, '2026-01-01 00:00:00' );
+expect_sync(
+	'flagging a conflict writes the flag without moving post_modified',
+	'2026-01-01 00:00:00' === (string) $GLOBALS['bcs_products'][ $flagged_id ]->get_meta( '_bcs_conflict_flag', true, 'edit' )
+	&& $modified_before_flag === (string) $GLOBALS['bcs_products'][ $flagged_id ]->props['post_modified_gmt']
+);
+
 /*
  * Convergence regressions. A source that has not changed must produce no
  * operations on a second run. Each case below is a field that could not

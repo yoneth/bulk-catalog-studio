@@ -455,8 +455,22 @@ class BCS_Catalog_Writer {
 		if ( null === $timestamp || '' === (string) $timestamp ) {
 			$timestamp = class_exists( 'BCS_Settings' ) ? BCS_Settings::now_mysql() : gmdate( 'Y-m-d H:i:s' );
 		}
-		$object->update_meta_data( '_bcs_conflict_flag', (string) $timestamp );
-		$object->save();
+		/*
+		 * Written with update_post_meta() rather than through the CRUD object on
+		 * purpose. $object->save() bumps post_modified, and conflict detection
+		 * compares post_modified against the snapshot the last sync write left
+		 * behind — so flagging a conflict would push post_modified past the
+		 * snapshot and guarantee the very same conflict on the next run. The
+		 * flag would re-raise itself forever. A raw meta write does not touch
+		 * post_modified, which is the same reason snapshot_post_modified() uses
+		 * it.
+		 */
+		if ( ! function_exists( 'update_post_meta' ) ) {
+			$object->update_meta_data( '_bcs_conflict_flag', (string) $timestamp );
+			$object->save();
+			return true;
+		}
+		update_post_meta( $object->get_id(), '_bcs_conflict_flag', (string) $timestamp );
 		return true;
 	}
 
