@@ -159,8 +159,13 @@ until its production credentials flow is shipped.
   built from the cartesian product of the attribute options.
 - Hierarchical categories: `Wanita > Dress`; multiple categories are
   comma-separated.
-- Images: V1 only supports `attachment_id` (numeric value in the `image_url` /
-  `image_id` column). Image URLs are ignored with a warning (gate1 decision #4).
+- Images: a numeric value in the `image_url` / `image_id` column is treated as an
+  existing `attachment_id`. A URL is sideloaded only when `allow_sideload` is on
+  **and** its host is in `sideload_domain_whitelist`; otherwise it is skipped with
+  a warning in the audit trail. Sideloading is https-only and rejects literal IP
+  addresses and internal hosts. The source URL is remembered on the product as
+  `_bcs_sync_image_url`, so an unchanged URL is never downloaded twice
+  (gate1 decision #4, opened for V1.1).
 - Limits: 500 rows/job hard limit, 100 rows default setting; 2 MB inline;
   10 MB attachment.
 

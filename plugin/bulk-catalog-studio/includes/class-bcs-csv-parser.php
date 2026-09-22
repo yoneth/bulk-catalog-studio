@@ -669,11 +669,20 @@ class BCS_CSV_Parser {
 				$row['image_id'] = absint( $image_url_raw );
 			} else {
 				$row['image_url'] = esc_url_raw( $image_url_raw );
-				$warnings[]       = sprintf(
-					/* translators: 1: nomor baris */
-					__( 'Row %1$d: image_url ignored — V1 only supports attachment_id (gate1 decision #4).', 'bulk-catalog-studio' ),
-					$row_index
-				);
+				/*
+				 * Gate-1 decision #4 kept sideloading out of V1, so a URL here
+				 * used to be dropped with a warning. It is a V1.1 feature now,
+				 * gated on the allow_sideload setting and a domain whitelist, so
+				 * the warning only applies while the setting is off.
+				 */
+				$sideload_enabled = class_exists( 'BCS_Settings' ) && BCS_Settings::get( 'allow_sideload', false );
+				if ( ! $sideload_enabled ) {
+					$warnings[] = sprintf(
+						/* translators: 1: nomor baris */
+						__( 'Row %1$d: image_url ignored — sideloading is disabled in settings.', 'bulk-catalog-studio' ),
+						$row_index
+					);
+				}
 			}
 		}
 		if ( '' !== $image_id_raw && preg_match( '/^\d+$/', $image_id_raw ) ) {

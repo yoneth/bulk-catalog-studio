@@ -564,7 +564,7 @@ class BCS_Catalog_Writer {
 		self::tag_bcs_meta( $product, $row_key, $job_id, $plan_id );
 
 		// Gambar.
-		$image_result = self::apply_image( $product, $payload['image'] ?? null );
+		$image_result = self::apply_image( $product, self::image_from_payload( $payload ) );
 		// MINOR-5 (retur QA-1): warning gambar gagal tidak dibuang —
 		// diteruskan ke pemanggil untuk masuk jejak audit.
 		$image_warning = is_wp_error( $image_result ) ? $image_result->get_error_message() : null;
@@ -728,7 +728,7 @@ class BCS_Catalog_Writer {
 		self::apply_scalar_fields( $product, $payload );
 		self::apply_terms( $product, $payload );
 
-		$image_result = self::apply_image( $product, $payload['image'] ?? null );
+		$image_result = self::apply_image( $product, self::image_from_payload( $payload ) );
 
 		self::apply_seo_meta( $product, $payload['seo'] ?? null );
 		self::tag_bcs_meta( $product, (string) ( $op['row_key'] ?? '' ), $job_id, $plan_id );
@@ -1184,8 +1184,211 @@ class BCS_Catalog_Writer {
 	 * @param array|null $image   Definisi gambar.
 	 * @return true|WP_Error
 	 */
+	/**
+	 * Decide whether a source URL may be downloaded.
+	 *
+	 * Gate-1 decision #4 kept sideloading out of V1 on least-privilege grounds
+	 * and put it in V1.1 explicitly paired with a domain whitelist. This is that
+	 * pairing: the whitelist is the feature, not an add-on to it. Server-side
+	 * fetching of an arbitrary URL is an SSRF primitive, so the checks below are
+	 * deliberately strict and fail closed.
+	 *
+	 * @param string $url Candidate URL.
+	 * @return true|WP_Error
+	 */
+	public static function validate_sideload_url( $url ) {
+		$url = trim( (string) $url );
+		if ( '' === $url ) {
+			return new WP_Error( 'bcs_image_url_empty', __( 'Image URL is empty.', 'bulk-catalog-studio' ) );
+		}
+
+		// "May this URL be downloaded?" includes "is downloading switched on?".
+		if ( ! BCS_Settings::get( 'allow_sideload', false ) ) {
+			return new WP_Error(
+				'bcs_image_sideload_disabled',
+				__( 'Image URL skipped: sideloading is disabled in settings.', 'bulk-catalog-studio' )
+			);
+		}
+
+		$parts = wp_parse_url( $url );
+		if ( ! is_array( $parts ) || empty( $parts['host'] ) ) {
+			return new WP_Error( 'bcs_image_url_invalid', __( 'Image URL could not be parsed.', 'bulk-catalog-studio' ) );
+		}
+
+		$scheme = isset( $parts['scheme'] ) ? strtolower( (string) $parts['scheme'] ) : '';
+		if ( 'https' !== $scheme ) {
+			return new WP_Error(
+				'bcs_image_scheme_forbidden',
+				sprintf(
+					/* translators: %s: URL scheme */
+					__( 'Image URL rejected: only https is allowed, got "%s".', 'bulk-catalog-studio' ),
+					$scheme
+				)
+			);
+		}
+
+		$host = strtolower( (string) $parts['host'] );
+
+		// A literal IP address can never be matched against a host whitelist and
+		// is the usual way to reach link-local or private infrastructure.
+		if ( filter_var( $host, FILTER_VALIDATE_IP ) ) {
+			return new WP_Error( 'bcs_image_host_forbidden', __( 'Image URL rejected: literal IP addresses are not allowed.', 'bulk-catalog-studio' ) );
+		}
+		if ( 'localhost' === $host || '.localhost' === substr( $host, -10 ) || '.local' === substr( $host, -6 ) || '.internal' === substr( $host, -9 ) ) {
+			return new WP_Error( 'bcs_image_host_forbidden', __( 'Image URL rejected: internal hosts are not allowed.', 'bulk-catalog-studio' ) );
+		}
+
+		$whitelist = array();
+		foreach ( (array) BCS_Settings::get( 'sideload_domain_whitelist', array() ) as $entry ) {
+			$entry = strtolower( trim( (string) $entry ) );
+			if ( '' !== $entry ) {
+				$whitelist[] = $entry;
+			}
+		}
+		if ( empty( $whitelist ) ) {
+			return new WP_Error( 'bcs_image_host_not_whitelisted', __( 'Image URL rejected: the sideload domain whitelist is empty.', 'bulk-catalog-studio' ) );
+		}
+
+		// Exact host, or a subdomain of a whitelisted host. Never a suffix match:
+		// "evilcf.djavaweb.com.attacker.test" must not pass for "cf.djavaweb.com".
+		foreach ( $whitelist as $allowed ) {
+			if ( $host === $allowed || substr( $host, -( strlen( $allowed ) + 1 ) ) === '.' . $allowed ) {
+				return true;
+			}
+		}
+
+		return new WP_Error(
+			'bcs_image_host_not_whitelisted',
+			sprintf(
+				/* translators: %s: host name */
+				__( 'Image URL rejected: host "%s" is not in the sideload domain whitelist.', 'bulk-catalog-studio' ),
+				$host
+			)
+		);
+	}
+
+	/**
+	 * Download a whitelisted image URL and attach it to the media library.
+	 *
+	 * @param string $url     Source URL, already validated.
+	 * @param int    $post_id Product the attachment belongs to.
+	 * @return int|WP_Error Attachment ID.
+	 */
+	public static function sideload_image( $url, $post_id ) {
+		foreach ( array( 'file.php', 'media.php', 'image.php' ) as $include ) {
+			$path = ABSPATH . 'wp-admin/includes/' . $include;
+			if ( is_readable( $path ) ) {
+				require_once $path;
+			}
+		}
+		if ( ! function_exists( 'download_url' ) || ! function_exists( 'media_handle_sideload' ) ) {
+			return new WP_Error( 'bcs_image_sideload_unavailable', __( 'WordPress media sideload functions are unavailable.', 'bulk-catalog-studio' ) );
+		}
+
+		$timeout = (int) BCS_Settings::get( 'sideload_timeout', 15 );
+		$tmp = download_url( $url, $timeout > 0 ? $timeout : 15 );
+		if ( is_wp_error( $tmp ) ) {
+			return $tmp;
+		}
+
+		$max_bytes = (int) BCS_Settings::get( 'max_attachment_bytes', 10485760 );
+		$size = @filesize( $tmp ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- ukuran hilang = tolak di bawah.
+		if ( $max_bytes > 0 && ( false === $size || $size > $max_bytes ) ) {
+			@unlink( $tmp ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- berkas sementara.
+			return new WP_Error(
+				'bcs_image_too_large',
+				sprintf(
+					/* translators: 1: actual bytes, 2: limit */
+					__( 'Image rejected: %1$s bytes exceeds the %2$d byte limit.', 'bulk-catalog-studio' ),
+					false === $size ? '?' : (string) $size,
+					$max_bytes
+				)
+			);
+		}
+
+		$name = basename( (string) wp_parse_url( $url, PHP_URL_PATH ) );
+		if ( '' === $name ) {
+			$name = 'bcs-image';
+		}
+		$attachment_id = media_handle_sideload( array( 'name' => $name, 'tmp_name' => $tmp ), absint( $post_id ) );
+		if ( is_wp_error( $attachment_id ) ) {
+			@unlink( $tmp ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- berkas sementara.
+			return $attachment_id;
+		}
+
+		return absint( $attachment_id );
+	}
+
+	/**
+	 * Normalize the two payload shapes into one image descriptor.
+	 *
+	 * The batch path passes a nested $payload['image']; the sync path carries
+	 * flat image_id / image_url / image_alt straight from the parsed row. This
+	 * reads either without changing the sync payload, and therefore without
+	 * changing its hash — a hash change would re-propose every product once.
+	 *
+	 * @param array $payload Write payload.
+	 * @return array|null
+	 */
+	private static function image_from_payload( array $payload ) {
+		if ( isset( $payload['image'] ) && is_array( $payload['image'] ) && ! empty( $payload['image'] ) ) {
+			return $payload['image'];
+		}
+		$image = array();
+		if ( ! empty( $payload['image_id'] ) ) {
+			$image['attachment_id'] = absint( $payload['image_id'] );
+		}
+		if ( ! empty( $payload['image_url'] ) ) {
+			$image['source_url'] = (string) $payload['image_url'];
+		}
+		if ( ! empty( $payload['image_alt'] ) ) {
+			$image['alt_text'] = (string) $payload['image_alt'];
+		}
+		return $image ? $image : null;
+	}
+
 	private static function apply_image( $product, $image ) {
-		if ( empty( $image ) || empty( $image['attachment_id'] ) ) {
+		if ( empty( $image ) ) {
+			return true;
+		}
+
+		$source_url = isset( $image['source_url'] ) ? trim( (string) $image['source_url'] ) : '';
+
+		/*
+		 * Sideload path (gate1 #4, promoted to V1.1). Only runs when there is no
+		 * explicit attachment id, the feature is switched on, and the host
+		 * passes the whitelist. It is idempotent through _bcs_sync_image_url:
+		 * the source URL that produced the current image is remembered on the
+		 * product, so an unchanged URL never downloads anything again. The diff
+		 * compares that stored SOURCE url, never the resulting attachment url,
+		 * which is what keeps the sync converging.
+		 */
+		if ( '' !== $source_url && empty( $image['attachment_id'] ) ) {
+			$product_id = method_exists( $product, 'get_id' ) ? absint( $product->get_id() ) : 0;
+			$existing_url = $product_id ? (string) get_post_meta( $product_id, '_bcs_sync_image_url', true ) : '';
+			$current_image = method_exists( $product, 'get_image_id' ) ? absint( $product->get_image_id() ) : 0;
+			if ( $existing_url === $source_url && $current_image > 0 ) {
+				// Already sideloaded from this exact URL; nothing to download.
+				if ( ! empty( $image['alt_text'] ) ) {
+					update_post_meta( $current_image, '_wp_attachment_image_alt', sanitize_text_field( (string) $image['alt_text'] ) );
+				}
+				return true;
+			}
+			$valid = self::validate_sideload_url( $source_url );
+			if ( is_wp_error( $valid ) ) {
+				return $valid;
+			}
+			$attachment_id = self::sideload_image( $source_url, $product_id );
+			if ( is_wp_error( $attachment_id ) ) {
+				return $attachment_id;
+			}
+			$image['attachment_id'] = absint( $attachment_id );
+			if ( $product_id ) {
+				update_post_meta( $product_id, '_bcs_sync_image_url', $source_url );
+			}
+		}
+
+		if ( empty( $image['attachment_id'] ) ) {
 			return true;
 		}
 

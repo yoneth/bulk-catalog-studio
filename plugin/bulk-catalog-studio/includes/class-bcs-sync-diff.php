@@ -526,7 +526,8 @@ class BCS_Sync_Diff {
 			MAX(CASE WHEN pm.meta_key = '_bcs_synced_at' THEN pm.meta_value ELSE '' END) AS synced_at,
 			MAX(CASE WHEN pm.meta_key = '_bcs_sync_post_modified' THEN pm.meta_value ELSE '' END) AS sync_post_modified,
 			MAX(CASE WHEN pm.meta_key = '_bcs_connection_id' THEN pm.meta_value ELSE '' END) AS connection_id,
-			MAX(CASE WHEN pm.meta_key = '_bcs_conflict_flag' THEN pm.meta_value ELSE '' END) AS conflict_flag
+			MAX(CASE WHEN pm.meta_key = '_bcs_conflict_flag' THEN pm.meta_value ELSE '' END) AS conflict_flag,
+			MAX(CASE WHEN pm.meta_key = '_bcs_sync_image_url' THEN pm.meta_value ELSE '' END) AS image_url
 			FROM {$posts_table} p
 			LEFT JOIN {$meta_table} pm ON pm.post_id = p.ID
 			WHERE p.post_type IN ('product','product_variation')
@@ -618,6 +619,10 @@ class BCS_Sync_Diff {
 			'sync_hash'        => array( 'sync_hash', '_bcs_sync_hash' ),
 			'connection_id'    => array( 'connection_id', '_bcs_connection_id' ),
 			'conflict_flag'    => array( 'conflict_flag', '_bcs_conflict_flag' ),
+			// The SOURCE url that produced the current image, never the
+			// attachment url: comparing the uploaded url against the sheet
+			// would differ on every run and the sync would never converge.
+			'image_url'        => array( 'image_url', '_bcs_sync_image_url' ),
 		);
 		$out = $record;
 		foreach ( $map as $target => $keys ) {

@@ -330,6 +330,15 @@ koneksi aktif pada baris ber-SKU ter-own: pesan menyebut connection id & field.
   dipakai ulang, tanpa format kedua.
 - Kolom tambahan khusus sync (opsional, di-mapping per koneksi):
   `sync_action` (`delete|hold`), `sync_note` (free text → audit).
+- **Gambar (V1.1, gate1 #4 dibuka).** Nilai numerik di kolom `URL Gambar` tetap
+  diperlakukan sebagai `attachment_id`. Sebuah URL hanya disideload bila setting
+  `allow_sideload` menyala **dan** host-nya lolos `sideload_domain_whitelist`;
+  selain itu dilewati dengan peringatan audit, bukan pembatalan run. Hanya `https`;
+  IP literal dan host internal ditolak; ukuran dibatasi `max_attachment_bytes`,
+  unduhan dibatasi `sideload_timeout`. URL sumber disimpan di `_bcs_sync_image_url`
+  pada produk sehingga URL yang tidak berubah tidak pernah diunduh ulang, dan diff
+  membandingkan URL sumber tersimpan itu — bukan URL attachment hasil unggah —
+  supaya run yang berurutan tetap menghasilkan nol operasi.
 - Baris dengan SKU kosong → error validasi (quarantine), tidak pernah auto-generate.
 - Kunci: SKU produk; untuk variasi: `SKU Variasi`. Kolom kunci **read-only bagi editor
   sheet** (dokumentasi + proteksi sheet bila mau — pola FlexSync).

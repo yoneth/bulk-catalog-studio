@@ -26,7 +26,9 @@ class BCS_Settings {
 			'max_inline_bytes'      => 2000000, // 2 MB (spec §5.3).
 			'max_attachment_bytes'  => 10485760, // 10 MB (spec §5.3).
 			'rate_limit_per_minute' => 60,      // Panggilan ability per user per menit (§5.3).
-			'allow_sideload'        => false,   // Gate1 #4: V1 = attachment_id_only.
+			'allow_sideload'        => false,   // Gate1 #4 dibuka untuk V1.1: sideload hanya bila dinyalakan DAN host masuk whitelist.
+			'sideload_domain_whitelist' => array( 'cf.djavaweb.com', 'img.lazcdn.com' ), // Host yang boleh disideload; kosong = tolak semua.
+			'sideload_timeout'      => 15,      // Detik per unduhan gambar.
 			'allow_url_source'      => true,    // URL export CSV publik Google Sheets (gate1 #1).
 			'execution_time_budget' => 20.0,    // Detik; sisanya dilanjutkan via resume.
 		);

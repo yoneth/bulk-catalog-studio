@@ -1094,6 +1094,21 @@ class BCS_Sync_Runner {
 			return $result;
 		}
 		$message = ! empty( $operation['sync_note'] ) ? (string) $operation['sync_note'] : __( 'Sync operation applied.', 'bulk-catalog-studio' );
+		/*
+		 * An image that could not be sideloaded is a warning, never an abort:
+		 * the rest of the row is already written and the run must not fail over
+		 * a remote fetch. The writer hands the reason back as image_warning and
+		 * it belongs in the audit trail, otherwise a rejected URL — wrong
+		 * scheme, host outside the whitelist, oversized file — would fail
+		 * silently and be impossible to diagnose.
+		 */
+		if ( is_array( $result ) && ! empty( $result['image_warning'] ) ) {
+			$message .= ' ' . sprintf(
+				/* translators: %s: image warning */
+				__( 'Image warning: %s', 'bulk-catalog-studio' ),
+				(string) $result['image_warning']
+			);
+		}
 		BCS_Audit_Logger::log_row( 'bcs/sync-run', $action, 'ok', 0, $sku, $product_id ? $product_id : null, $message, isset( $operation['operation_key'] ) ? $operation['operation_key'] : null, $run_id, 0, 'sync', $actor );
 		return $result;
 	}

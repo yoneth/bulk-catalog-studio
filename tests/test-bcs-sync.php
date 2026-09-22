@@ -29,7 +29,8 @@ function sanitize_textarea_field( $value ) { return is_scalar( $value ) ? trim( 
 function sanitize_key( $value ) { return preg_replace( '/[^a-z0-9_\-]/', '', strtolower( (string) $value ) ); }
 function wp_json_encode( $value, $flags = 0 ) { return json_encode( $value, $flags ); }
 function current_time( $type, $gmt = 0 ) { return gmdate( 'Y-m-d H:i:s' ); }
-function get_option( $name, $default = false ) { return $default; }
+function get_option( $name, $default = false ) { return $GLOBALS['bcs_options'][ $name ] ?? $default; }
+function update_option( $name, $value ) { $GLOBALS['bcs_options'][ $name ] = $value; return true; }
 function wp_kses_post( $value ) { return (string) $value; }
 function update_post_meta( $id, $key, $value ) {
 	// Records the meta WITHOUT calling save(), mirroring WordPress: a raw meta
@@ -50,6 +51,7 @@ function get_post_field( $field, $id ) {
 	return (string) $product->props[ $field ];
 }
 function get_post( $id ) { return null; }
+function wp_parse_url( $url, $component = -1 ) { return -1 === $component ? parse_url( $url ) : parse_url( $url, $component ); }
 function get_term_by( $field, $value, $taxonomy ) { return false; }
 function wp_insert_term( $name, $taxonomy, $args = array() ) {
 	// Remember which taxonomy each term was created in; ensure_term() used to
@@ -289,6 +291,66 @@ $missing = BCS_Sync_Diff::diff( array( array( 'sku' => 'SKU-1', 'name' => 'Item'
 expect_sync( 'one missing SKU is flagged', ! is_wp_error( $missing ) && 1 === $missing['summary']['flag_missing'] );
 $guard = BCS_Sync_Diff::diff( array( array( 'sku' => 'SKU-1', 'name' => 'Item', 'regular_price' => '10' ) ), sync_connection( array( 'policy' => array( 'seen_skus' => array( 'SKU-1', 'SKU-2', 'SKU-3', 'SKU-4', 'SKU-5' ) ) ) ), $base_state );
 expect_sync( 'more than 20 percent missing aborts', is_wp_error( $guard ) && 'missing_rows_guard' === $guard->get_error_code() );
+/*
+ * Image sideload (gate1 #4, promoted to V1.1). Server-side fetching of a URL is
+ * an SSRF primitive, so the guard is the feature: the decision that opened
+ * sideloading paired it with a domain whitelist, and these cases pin that pairing
+ * down. Every check must fail closed.
+ */
+$sideload_settings = array(
+	'allow_sideload'            => true,
+	'sideload_domain_whitelist' => array( 'cf.djavaweb.com', 'img.lazcdn.com' ),
+);
+update_option( 'bcs_settings', $sideload_settings );
+
+expect_sync(
+	'a whitelisted https host is accepted',
+	true === BCS_Catalog_Writer::validate_sideload_url( 'https://cf.djavaweb.com/bcs-e2e/foto.jpg' )
+);
+expect_sync(
+	'a subdomain of a whitelisted host is accepted',
+	true === BCS_Catalog_Writer::validate_sideload_url( 'https://cdn.img.lazcdn.com/p/foto.jpg' )
+);
+$plain_http = BCS_Catalog_Writer::validate_sideload_url( 'http://cf.djavaweb.com/foto.jpg' );
+expect_sync(
+	'plain http is rejected',
+	is_wp_error( $plain_http ) && 'bcs_image_scheme_forbidden' === $plain_http->get_error_code()
+);
+$off_whitelist = BCS_Catalog_Writer::validate_sideload_url( 'https://penyerang.test/foto.jpg' );
+expect_sync(
+	'a host outside the whitelist is rejected',
+	is_wp_error( $off_whitelist ) && 'bcs_image_host_not_whitelisted' === $off_whitelist->get_error_code()
+);
+// The classic whitelist bypass: a suffix that merely ends with the allowed name.
+$suffix_trick = BCS_Catalog_Writer::validate_sideload_url( 'https://evilcf.djavaweb.com.penyerang.test/foto.jpg' );
+expect_sync(
+	'a host that only ends with the whitelisted name is rejected',
+	is_wp_error( $suffix_trick ) && 'bcs_image_host_not_whitelisted' === $suffix_trick->get_error_code()
+);
+$literal_ip = BCS_Catalog_Writer::validate_sideload_url( 'https://169.254.169.254/latest/meta-data/' );
+expect_sync(
+	'a literal IP address is rejected',
+	is_wp_error( $literal_ip ) && 'bcs_image_host_forbidden' === $literal_ip->get_error_code()
+);
+$internal_host = BCS_Catalog_Writer::validate_sideload_url( 'https://redis.internal/foto.jpg' );
+expect_sync(
+	'an internal host is rejected',
+	is_wp_error( $internal_host ) && 'bcs_image_host_forbidden' === $internal_host->get_error_code()
+);
+update_option( 'bcs_settings', array( 'allow_sideload' => true, 'sideload_domain_whitelist' => array() ) );
+$empty_whitelist = BCS_Catalog_Writer::validate_sideload_url( 'https://cf.djavaweb.com/foto.jpg' );
+expect_sync(
+	'an empty whitelist rejects everything rather than allowing everything',
+	is_wp_error( $empty_whitelist ) && 'bcs_image_host_not_whitelisted' === $empty_whitelist->get_error_code()
+);
+update_option( 'bcs_settings', array( 'allow_sideload' => false, 'sideload_domain_whitelist' => array( 'cf.djavaweb.com' ) ) );
+$disabled = BCS_Catalog_Writer::validate_sideload_url( 'https://cf.djavaweb.com/foto.jpg' );
+expect_sync(
+	'sideloading stays off while the setting is off',
+	is_wp_error( $disabled ) && 'bcs_image_sideload_disabled' === $disabled->get_error_code()
+);
+update_option( 'bcs_settings', $sideload_settings );
+
 /*
  * Conflict classification. WooCommerce touches a product asynchronously after a
  * write, so post_modified drifts past the snapshot with no owned field changing.
