@@ -531,7 +531,7 @@ class BCS_Sync_Runner {
 		$updated_runs = 0;
 		$now = self::now_mysql();
 		$user = function_exists( 'get_current_user_id' ) ? get_current_user_id() : 0;
-		foreach ( self::list_runs( $connection_id, 500 ) as $run ) {
+		foreach ( self::runs_with_quarantine( $connection_id ) as $run ) {
 			if ( (int) $run['id'] === (int) $skip_run_id ) {
 				continue;
 			}
@@ -563,6 +563,54 @@ class BCS_Sync_Runner {
 		return $updated_runs;
 	}
 
+	/**
+	 * Runs that actually carry quarantine entries.
+	 *
+	 * The quarantine screen used to walk the last 500 runs. On a one-minute
+	 * schedule that window is about eight hours, so an entry older than that
+	 * became invisible to the human who had to answer it — while still blocking
+	 * log retention, because a run holding an unanswered entry is never purged.
+	 * A question nobody can see that stops cleanup forever is worse than a wider
+	 * query.
+	 *
+	 * Rather than reading every run and discarding most of them, the filter is
+	 * pushed into SQL: only rows whose diff_summary actually contains a
+	 * non-empty quarantine array come back. On the live site that is a handful
+	 * of rows out of nearly nine hundred. Resolved entries are included on
+	 * purpose — the grouping needs them to know a group has been answered.
+	 *
+	 * @param int $connection_id Connection filter, 0 for all.
+	 * @param int $limit         Maximum rows; the caller paginates if it grows.
+	 * @return array
+	 */
+	private static function runs_with_quarantine( $connection_id = 0, $limit = 2000 ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'bcs_sync_runs';
+		$limit = max( 1, min( 20000, absint( $limit ) ) );
+		// esc_like() exists on the real $wpdb; guard anyway so a stripped-down
+		// database object cannot turn a listing into a fatal error.
+		$marker = '"quarantine":[{';
+		$needle = '%' . ( method_exists( $wpdb, 'esc_like' ) ? $wpdb->esc_like( $marker ) : addcslashes( $marker, '_%\\' ) ) . '%';
+
+		if ( absint( $connection_id ) > 0 ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- nama tabel dari prefix, nilai via prepare.
+			$rows = $wpdb->get_results(
+				$wpdb->prepare( "SELECT * FROM {$table} WHERE connection_id = %d AND diff_summary LIKE %s ORDER BY id DESC LIMIT %d", absint( $connection_id ), $needle, $limit )
+			);
+		} else {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- nama tabel dari prefix, nilai via prepare.
+			$rows = $wpdb->get_results(
+				$wpdb->prepare( "SELECT * FROM {$table} WHERE diff_summary LIKE %s ORDER BY id DESC LIMIT %d", $needle, $limit )
+			);
+		}
+		// Normalized the same way list_runs() does, so callers see one shape.
+		$out = array();
+		foreach ( (array) $rows as $row ) {
+			$out[] = self::normalize_run( $row );
+		}
+		return $out;
+	}
+
 	public static function quarantine_key( $connection_id, array $item ) {
 		$payload = isset( $item['payload'] ) && is_array( $item['payload'] ) ? $item['payload'] : array();
 		ksort( $payload );
@@ -580,7 +628,7 @@ class BCS_Sync_Runner {
 
 		$groups   = array();
 		$resolved = array();
-		foreach ( self::list_runs( $connection_id, 500 ) as $run ) {
+		foreach ( self::runs_with_quarantine( $connection_id ) as $run ) {
 			$diff = self::decode_diff( $run['diff_summary'] );
 			foreach ( (array) ( isset( $diff['quarantine'] ) ? $diff['quarantine'] : array() ) as $item ) {
 				if ( ! is_array( $item ) ) {

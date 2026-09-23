@@ -161,7 +161,19 @@ class Fake_Sync_WPDB {
 	public function get_results( $sql, $mode = null ) {
 		if ( preg_match( '/FROM\s+(\S+)/i', $sql, $match ) ) {
 			$table = trim( $match[1], '`' ); $conditions = $this->conditions( $sql ); $rows = array();
-			foreach ( $this->table_rows( $table ) as $row ) { if ( $this->matches( $row, $conditions ) ) { $rows[] = ARRAY_A === $mode ? $row : (object) $row; } }
+			foreach ( $this->table_rows( $table ) as $row ) { if ( $this->matches( $row, $conditions ) ) { $rows[] = $row; } }
+			// Honour ORDER BY id DESC and LIMIT: a query that reads only the most
+			// recent N rows behaves very differently from one that reads all of
+			// them, and that difference is exactly what some regressions are about.
+			if ( preg_match( '/ORDER\s+BY\s+id\s+DESC/i', $sql ) ) {
+				usort( $rows, function ( $a, $b ) { return (int) $b['id'] <=> (int) $a['id']; } );
+			}
+			if ( preg_match( '/LIMIT\s+(\d+)/i', $sql, $limit_match ) ) {
+				$rows = array_slice( $rows, 0, (int) $limit_match[1] );
+			}
+			if ( ARRAY_A !== $mode ) {
+				$rows = array_map( function ( $row ) { return (object) $row; }, $rows );
+			}
 			return $rows;
 		}
 		return array();
@@ -358,6 +370,45 @@ expect_sync(
 	'a category edit in the sheet is detected as an update',
 	! is_wp_error( $cat_changed ) && 1 === count( $cat_changed['operations'] ) && 'update' === $cat_changed['operations'][0]['op']
 );
+
+// A quarantine entry older than the last 500 runs must still be visible. The
+// screen used to walk list_runs(500); on a one-minute schedule that window is
+// about eight hours, so an older entry disappeared from the tab while still
+// blocking log retention — a question nobody could see that stopped cleanup.
+$GLOBALS['wpdb']->tables['wp_bcs_sync_runs'] = array();
+$old_conn = 7777;
+$GLOBALS['wpdb']->tables['wp_bcs_sync_runs'][] = array(
+	'id'            => 1,
+	'connection_id' => $old_conn,
+	'run_trigger'   => 'cron',
+	'state'         => 'done',
+	'diff_hash'     => sha1( 'old-q' ),
+	'diff_summary'  => wp_json_encode( array( 'summary' => array(), 'operations' => array(), 'quarantine' => array( array( 'sku' => 'OLD-1', 'reason' => 'price_delta_exceeded', 'payload' => array( 'sku' => 'OLD-1' ) ) ), 'seen_skus' => array() ) ),
+	'started_at'    => gmdate( 'Y-m-d H:i:s' ),
+);
+// 600 newer runs with nothing held, pushing the old one far outside any window.
+for ( $i = 2; $i <= 601; $i++ ) {
+	$GLOBALS['wpdb']->tables['wp_bcs_sync_runs'][] = array(
+		'id'            => $i,
+		'connection_id' => $old_conn,
+		'run_trigger'   => 'cron',
+		'state'         => 'done',
+		'diff_hash'     => sha1( 'quiet' . $i ),
+		'diff_summary'  => wp_json_encode( array( 'summary' => array(), 'operations' => array(), 'quarantine' => array(), 'seen_skus' => array() ) ),
+		'started_at'    => gmdate( 'Y-m-d H:i:s' ),
+	);
+}
+$old_window = BCS_Sync_Runner::list_runs( $old_conn, 500 );
+$old_visible = BCS_Sync_Runner::list_quarantine( $old_conn, 200 );
+expect_sync(
+	'the run holding the old entry really is outside the 500-run window',
+	500 === count( $old_window ) && 1 !== (int) $old_window[ count( $old_window ) - 1 ]['id']
+);
+expect_sync(
+	'a quarantine entry older than the last 500 runs is still listed',
+	1 === count( $old_visible ) && 'OLD-1' === (string) ( $old_visible[0]['sku'] ?? '' )
+);
+$GLOBALS['wpdb']->tables['wp_bcs_sync_runs'] = array();
 
 /*
  * Log retention. Deleting history cannot be undone, so the four protection rules
