@@ -535,6 +535,7 @@ class BCS_Sync_Diff {
 			GROUP BY p.ID";
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared -- tables are controlled WP table names; no user values.
 		$records = $wpdb->get_results( $sql );
+		$category_paths = self::load_category_paths();
 		$products = array();
 		$variations = array();
 		foreach ( (array) $records as $record ) {
@@ -547,6 +548,10 @@ class BCS_Sync_Diff {
 			$sku = self::record_sku( $normalized, '' );
 			if ( '' !== $sku ) {
 				$normalized['variations'] = array();
+				$product_id = (int) $record['ID'];
+				if ( isset( $category_paths[ $product_id ] ) ) {
+					$normalized['categories'] = $category_paths[ $product_id ];
+				}
 				$products[ strtolower( $sku ) ] = $normalized;
 			}
 		}
@@ -869,6 +874,122 @@ class BCS_Sync_Diff {
 	 * @param array $record  Current record.
 	 * @return bool
 	 */
+	/**
+	 * Normalize category values into a comparable set of hierarchical paths.
+	 *
+	 * The sheet writes a chain, "Pria > Kemeja". WordPress stores that chain as
+	 * two terms, and reading the product back gives their names in no particular
+	 * order. Comparing the chain string against that list of names can never
+	 * match, so categories were simply never compared.
+	 *
+	 * Both sides are reduced to the same shape: a sorted set of lower-cased
+	 * paths with single " > " separators. An ancestor that is only implied by a
+	 * longer path is dropped, because the sheet expresses the chain once rather
+	 * than listing every level — "Pria" alongside "Pria > Kemeja" is the same
+	 * statement as "Pria > Kemeja" on its own.
+	 *
+	 * @param mixed $values Category paths or names.
+	 * @return array Sorted, normalized paths.
+	 */
+	/**
+	 * Hierarchical category paths for every product, in one query.
+	 *
+	 * Loaded in bulk rather than per product: the diff already walks the whole
+	 * catalog, and asking WordPress for a product's terms one at a time would
+	 * add a query per row on every scheduled run.
+	 *
+	 * Returns an empty map when the taxonomy tables are unavailable, which makes
+	 * the comparison skip categories rather than report a spurious difference —
+	 * the record simply does not carry the field.
+	 *
+	 * @return array Product ID => list of "Parent > Child" paths.
+	 */
+	private static function load_category_paths() {
+		global $wpdb;
+		if ( ! isset( $wpdb ) || ! method_exists( $wpdb, 'get_results' ) || ! isset( $wpdb->term_relationships ) ) {
+			return array();
+		}
+
+		$sql = "SELECT tr.object_id, t.term_id, t.name, tt.parent
+			FROM {$wpdb->term_relationships} tr
+			INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id AND tt.taxonomy = 'product_cat'
+			INNER JOIN {$wpdb->terms} t ON t.term_id = tt.term_id";
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared -- nama tabel dari objek wpdb.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		if ( ! is_array( $rows ) || empty( $rows ) ) {
+			return array();
+		}
+
+		$names = array();
+		$parents = array();
+		$by_product = array();
+		foreach ( $rows as $row ) {
+			$term_id = (int) $row['term_id'];
+			$names[ $term_id ] = (string) $row['name'];
+			$parents[ $term_id ] = (int) $row['parent'];
+			$by_product[ (int) $row['object_id'] ][] = $term_id;
+		}
+
+		$paths = array();
+		foreach ( $by_product as $product_id => $term_ids ) {
+			$product_paths = array();
+			foreach ( $term_ids as $term_id ) {
+				$chain = array();
+				$cursor = $term_id;
+				$guard = 0;
+				// Walk to the root. The guard stops a corrupted parent cycle from
+				// looping forever on a scheduled run.
+				while ( $cursor && isset( $names[ $cursor ] ) && $guard < 20 ) {
+					array_unshift( $chain, $names[ $cursor ] );
+					$cursor = isset( $parents[ $cursor ] ) ? (int) $parents[ $cursor ] : 0;
+					$guard++;
+				}
+				if ( $chain ) {
+					$product_paths[] = implode( ' > ', $chain );
+				}
+			}
+			$paths[ (int) $product_id ] = $product_paths;
+		}
+		return $paths;
+	}
+
+	public static function normalize_category_paths( $values ) {
+		$paths = array();
+		foreach ( (array) $values as $value ) {
+			if ( is_array( $value ) ) {
+				$value = implode( ' > ', $value );
+			}
+			$segments = array();
+			foreach ( explode( '>', (string) $value ) as $segment ) {
+				$segment = trim( preg_replace( '/\s+/u', ' ', (string) $segment ) );
+				if ( '' !== $segment ) {
+					$segments[] = function_exists( 'mb_strtolower' ) ? mb_strtolower( $segment, 'UTF-8' ) : strtolower( $segment );
+				}
+			}
+			if ( $segments ) {
+				$paths[] = implode( ' > ', $segments );
+			}
+		}
+		$paths = array_values( array_unique( $paths ) );
+
+		// Drop any path that is merely a prefix of a longer one.
+		$leaves = array();
+		foreach ( $paths as $path ) {
+			$is_prefix = false;
+			foreach ( $paths as $other ) {
+				if ( $path !== $other && 0 === strpos( $other, $path . ' > ' ) ) {
+					$is_prefix = true;
+					break;
+				}
+			}
+			if ( ! $is_prefix ) {
+				$leaves[] = $path;
+			}
+		}
+		sort( $leaves );
+		return $leaves;
+	}
+
 	private static function payload_matches_record( array $payload, array $record ) {
 		/*
 		 * A variable parent holds no price of its own in WooCommerce: its price
@@ -886,6 +1007,14 @@ class BCS_Sync_Diff {
 				continue;
 			}
 			if ( $is_variable_parent && in_array( $field, array( 'regular_price', 'sale_price' ), true ) ) {
+				continue;
+			}
+			if ( 'categories' === $field && array_key_exists( 'categories', $record ) ) {
+				// Path-aware: a chain from the sheet against the term set WordPress
+				// actually stores. Comparing them as raw values never matches.
+				if ( self::normalize_category_paths( $value ) !== self::normalize_category_paths( $record['categories'] ) ) {
+					return false;
+				}
 				continue;
 			}
 			if ( in_array( $field, array( 'sku', 'attributes', 'categories', 'tags', 'image_id', 'image_url', 'image_alt', 'seo_title', 'seo_description' ), true ) ) {

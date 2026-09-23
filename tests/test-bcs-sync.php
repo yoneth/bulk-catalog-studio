@@ -294,6 +294,72 @@ expect_sync( 'one missing SKU is flagged', ! is_wp_error( $missing ) && 1 === $m
 $guard = BCS_Sync_Diff::diff( array( array( 'sku' => 'SKU-1', 'name' => 'Item', 'regular_price' => '10' ) ), sync_connection( array( 'policy' => array( 'seen_skus' => array( 'SKU-1', 'SKU-2', 'SKU-3', 'SKU-4', 'SKU-5' ) ) ) ), $base_state );
 expect_sync( 'more than 20 percent missing aborts', is_wp_error( $guard ) && 'missing_rows_guard' === $guard->get_error_code() );
 /*
+ * Path-aware category comparison. The sheet writes a chain, "Pria > Kemeja";
+ * WordPress stores it as two terms and hands their names back in no order. The
+ * two shapes can never match as raw values, which is why categories were never
+ * compared at all.
+ */
+expect_sync(
+	'a chain and the term set WordPress stores compare equal',
+	BCS_Sync_Diff::normalize_category_paths( array( 'Pria > Kemeja' ) )
+	=== BCS_Sync_Diff::normalize_category_paths( array( 'Pria > Kemeja', 'Pria' ) )
+);
+expect_sync(
+	'separator spacing and case do not create a difference',
+	BCS_Sync_Diff::normalize_category_paths( array( 'Pria>Kemeja' ) )
+	=== BCS_Sync_Diff::normalize_category_paths( array( '  pria  >  KEMEJA ' ) )
+);
+expect_sync(
+	'order between separate categories does not create a difference',
+	BCS_Sync_Diff::normalize_category_paths( array( 'Wanita > Dress', 'Pria > Kemeja' ) )
+	=== BCS_Sync_Diff::normalize_category_paths( array( 'Pria > Kemeja', 'Wanita > Dress' ) )
+);
+expect_sync(
+	'a genuinely different category is still a difference',
+	BCS_Sync_Diff::normalize_category_paths( array( 'Pria > Kemeja' ) )
+	!== BCS_Sync_Diff::normalize_category_paths( array( 'Pria > Celana' ) )
+);
+expect_sync(
+	'a deeper path is not the same as its parent',
+	BCS_Sync_Diff::normalize_category_paths( array( 'Pria' ) )
+	!== BCS_Sync_Diff::normalize_category_paths( array( 'Pria > Kemeja' ) )
+);
+
+// Convergence guard: enabling a new compared field must not make an unchanged
+// source propose work forever, the trap stock and dimensions both fell into.
+$cat_state = array(
+	'catalog_count' => 100,
+	'products'      => array(
+		'cat-1' => array(
+			'id'            => 701,
+			'sku'           => 'CAT-1',
+			'regular_price' => '10',
+			'sync_hash'     => '',
+			'categories'    => array( 'Pria > Kemeja', 'Pria' ),
+			'variations'    => array(),
+		),
+	),
+);
+$cat_same = BCS_Sync_Diff::diff(
+	array( array( 'sku' => 'CAT-1', 'regular_price' => '10', 'categories' => array( 'Pria > Kemeja' ) ) ),
+	sync_connection(),
+	$cat_state
+);
+expect_sync(
+	'an unchanged category produces no operation',
+	! is_wp_error( $cat_same ) && 0 === count( $cat_same['operations'] )
+);
+$cat_changed = BCS_Sync_Diff::diff(
+	array( array( 'sku' => 'CAT-1', 'regular_price' => '10', 'categories' => array( 'Pria > Celana' ) ) ),
+	sync_connection(),
+	$cat_state
+);
+expect_sync(
+	'a category edit in the sheet is detected as an update',
+	! is_wp_error( $cat_changed ) && 1 === count( $cat_changed['operations'] ) && 'update' === $cat_changed['operations'][0]['op']
+);
+
+/*
  * Log retention. Deleting history cannot be undone, so the four protection rules
  * are pinned here as invariants rather than left to the purge query's shape.
  */
