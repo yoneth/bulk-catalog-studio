@@ -35,6 +35,9 @@ class BCS_Admin {
 		if ( class_exists( 'BCS_Sync_Admin' ) ) {
 			BCS_Sync_Admin::init();
 		}
+		if ( class_exists( 'BCS_Settings_Admin' ) ) {
+			BCS_Settings_Admin::init();
+		}
 	}
 
 	/**
@@ -61,6 +64,19 @@ class BCS_Admin {
 				'edit_products',
 				BCS_Sync_Admin::PAGE_SLUG,
 				array( 'BCS_Sync_Admin', 'render' )
+			);
+		}
+
+		// Settings sit behind manage_woocommerce, not edit_products: they decide
+		// which hosts the server will fetch from and how much history is deleted.
+		if ( function_exists( 'add_submenu_page' ) && class_exists( 'BCS_Settings_Admin' ) ) {
+			add_submenu_page(
+				self::PAGE_SLUG,
+				__( 'Settings', 'bulk-catalog-studio' ),
+				__( 'Settings', 'bulk-catalog-studio' ),
+				'manage_woocommerce',
+				BCS_Settings_Admin::PAGE_SLUG,
+				array( 'BCS_Settings_Admin', 'render' )
 			);
 		}
 	}
@@ -896,6 +912,9 @@ class BCS_Admin {
 }
 
 // Load the sync screen when this admin class is used directly by a harness.
+if ( file_exists( __DIR__ . '/class-bcs-settings-admin.php' ) ) {
+	require_once __DIR__ . '/class-bcs-settings-admin.php';
+}
 if ( file_exists( __DIR__ . '/class-bcs-sync-admin.php' ) ) {
 	require_once __DIR__ . '/class-bcs-sync-admin.php';
 }

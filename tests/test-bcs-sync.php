@@ -567,6 +567,73 @@ expect_sync(
 );
 
 /*
+ * Settings sanitizer. These values decide whether the server will fetch a remote
+ * URL and how much history it will delete, so a crafted POST must not be able to
+ * widen the whitelist into something validate_sideload_url() would then trust,
+ * or set a batch size large enough to hold the log tables locked.
+ */
+$sanitized = BCS_Settings::sanitize_input( array(
+	'allow_sideload'            => '1',
+	'sideload_domain_whitelist' => "https://cf.djavaweb.com/path/foto.jpg\n  IMG.LAZCDN.COM  \n\nexample.com:8443\n127.0.0.1\nbukan host\ncf.djavaweb.com\n",
+	'sideload_timeout'          => '9999',
+	'audit_retention_days'      => '0',
+	'sync_runs_retention_days'  => 'bukan angka',
+	'purge_batch_size'          => '-5',
+	'tidak_dikenal'             => 'harus dibuang',
+) );
+expect_sync(
+	'a URL in the whitelist is reduced to its bare host',
+	in_array( 'cf.djavaweb.com', $sanitized['sideload_domain_whitelist'], true )
+);
+expect_sync(
+	'whitelist entries are lower-cased, trimmed and de-duplicated',
+	in_array( 'img.lazcdn.com', $sanitized['sideload_domain_whitelist'], true )
+	&& 1 === count( array_keys( $sanitized['sideload_domain_whitelist'], 'cf.djavaweb.com', true ) )
+);
+expect_sync(
+	'a port is stripped rather than saved as part of the host',
+	in_array( 'example.com', $sanitized['sideload_domain_whitelist'], true )
+);
+expect_sync(
+	'an IP address is never accepted into the whitelist',
+	! in_array( '127.0.0.1', $sanitized['sideload_domain_whitelist'], true )
+);
+expect_sync(
+	'a value that is not a hostname is dropped',
+	! in_array( 'bukan host', $sanitized['sideload_domain_whitelist'], true )
+);
+expect_sync(
+	'an out-of-range timeout is clamped instead of stored',
+	120 === $sanitized['sideload_timeout']
+);
+expect_sync(
+	'a retention of zero is preserved as "never purge"',
+	0 === $sanitized['audit_retention_days']
+);
+expect_sync(
+	'a non-numeric retention falls back to the default',
+	90 === $sanitized['sync_runs_retention_days']
+);
+expect_sync(
+	'a negative batch size is clamped to a usable minimum',
+	1 === $sanitized['purge_batch_size']
+);
+expect_sync(
+	'unknown keys are dropped rather than stored',
+	! array_key_exists( 'tidak_dikenal', $sanitized )
+);
+$unchecked = BCS_Settings::sanitize_input( array( 'sideload_domain_whitelist' => 'cf.djavaweb.com' ) );
+expect_sync(
+	'an unchecked sideload box turns the feature off',
+	false === $unchecked['allow_sideload']
+);
+$empty_list = BCS_Settings::sanitize_input( array( 'allow_sideload' => '1', 'sideload_domain_whitelist' => '' ) );
+expect_sync(
+	'an empty whitelist is stored as empty, which blocks every download',
+	array() === $empty_list['sideload_domain_whitelist']
+);
+
+/*
  * Image sideload (gate1 #4, promoted to V1.1). Server-side fetching of a URL is
  * an SSRF primitive, so the guard is the feature: the decision that opened
  * sideloading paired it with a domain whitelist, and these cases pin that pairing
