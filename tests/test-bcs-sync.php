@@ -292,6 +292,71 @@ expect_sync( 'one missing SKU is flagged', ! is_wp_error( $missing ) && 1 === $m
 $guard = BCS_Sync_Diff::diff( array( array( 'sku' => 'SKU-1', 'name' => 'Item', 'regular_price' => '10' ) ), sync_connection( array( 'policy' => array( 'seen_skus' => array( 'SKU-1', 'SKU-2', 'SKU-3', 'SKU-4', 'SKU-5' ) ) ) ), $base_state );
 expect_sync( 'more than 20 percent missing aborts', is_wp_error( $guard ) && 'missing_rows_guard' === $guard->get_error_code() );
 /*
+ * Quarantine deduplication. A held row is recorded inside every run's
+ * diff_summary, so a sync on a one-minute schedule records an identical entry
+ * once a minute. The screen showed one row per run for a single underlying
+ * problem, and resolving one of them left all the others open.
+ */
+$q_conn = 4242;
+$q_payload = array( 'sku' => 'QRT-1', 'regular_price' => '400000' );
+$q_entry = array( 'sku' => 'QRT-1', 'reason' => 'price_delta_exceeded', 'payload' => $q_payload );
+for ( $i = 0; $i < 4; $i++ ) {
+	$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array(
+		'connection_id' => $q_conn,
+		'run_trigger'   => 'cron',
+		'state'         => 'done',
+		'diff_hash'     => sha1( 'q' . $i ),
+		'diff_summary'  => wp_json_encode( array( 'summary' => array(), 'operations' => array(), 'quarantine' => array( $q_entry ), 'seen_skus' => array() ) ),
+		'started_at'    => gmdate( 'Y-m-d H:i:s' ),
+	) );
+}
+// A genuinely different payload must stay a separate entry.
+$q_changed = $q_entry;
+$q_changed['payload']['regular_price'] = '999000';
+$GLOBALS['wpdb']->insert( 'wp_bcs_sync_runs', array(
+	'connection_id' => $q_conn,
+	'run_trigger'   => 'cron',
+	'state'         => 'done',
+	'diff_hash'     => sha1( 'q-changed' ),
+	'diff_summary'  => wp_json_encode( array( 'summary' => array(), 'operations' => array(), 'quarantine' => array( $q_changed ), 'seen_skus' => array() ) ),
+	'started_at'    => gmdate( 'Y-m-d H:i:s' ),
+) );
+
+$q_list = BCS_Sync_Runner::list_quarantine( $q_conn, 200 );
+$q_same = array();
+foreach ( $q_list as $row ) {
+	if ( '400000' === (string) ( $row['payload']['regular_price'] ?? '' ) ) { $q_same[] = $row; }
+}
+expect_sync(
+	'four identical quarantine entries collapse into one row',
+	1 === count( $q_same ) && 4 === (int) ( $q_same[0]['occurrences'] ?? 0 )
+);
+expect_sync(
+	'a quarantine entry whose payload changed stays a separate row',
+	2 === count( $q_list )
+);
+expect_sync(
+	'the collapsed row points at the latest run and remembers the first',
+	isset( $q_same[0]['run_id'], $q_same[0]['first_seen_run_id'] ) && $q_same[0]['run_id'] > $q_same[0]['first_seen_run_id']
+);
+
+// Resolving once must settle every copy, not just the run that was clicked.
+$q_resolved = BCS_Sync_Runner::resolve_quarantine( (int) $q_same[0]['run_id'], 'QRT-1', 'discard', 'wp_admin' );
+$q_after = BCS_Sync_Runner::list_quarantine( $q_conn, 200 );
+$q_still_open = 0;
+foreach ( $q_after as $row ) {
+	if ( '400000' === (string) ( $row['payload']['regular_price'] ?? '' ) ) { $q_still_open++; }
+}
+expect_sync(
+	'resolving one occurrence settles the whole quarantine group',
+	! is_wp_error( $q_resolved ) && 0 === $q_still_open
+);
+expect_sync(
+	'resolving one group leaves the other entry untouched',
+	1 === count( $q_after )
+);
+
+/*
  * Image sideload (gate1 #4, promoted to V1.1). Server-side fetching of a URL is
  * an SSRF primitive, so the guard is the feature: the decision that opened
  * sideloading paired it with a domain whitelist, and these cases pin that pairing

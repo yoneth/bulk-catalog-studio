@@ -501,23 +501,134 @@ class BCS_Sync_Runner {
 	 * @param int $limit Maximum entries.
 	 * @return array
 	 */
+	/**
+	 * Identity of a quarantine entry, independent of which run recorded it.
+	 *
+	 * Quarantine lives inside each run's diff_summary, so a scheduled sync that
+	 * keeps meeting the same rejected row records an identical entry every time
+	 * it runs. Once a minute that is one new row in the Quarantine screen per
+	 * minute, for one underlying problem. Everything a human would use to tell
+	 * two entries apart goes into the key; the payload hash is what makes an
+	 * entry whose values actually changed a genuinely new one.
+	 *
+	 * @param int   $connection_id Connection the entry belongs to.
+	 * @param array $item          Quarantine entry.
+	 * @return string
+	 */
+	/**
+	 * Mark every other unresolved copy of one quarantine entry as settled.
+	 *
+	 * Only bookkeeping: no catalog write happens here. The apply, when the human
+	 * chose one, was already performed against the run they acted on.
+	 *
+	 * @param int    $connection_id Connection to scan.
+	 * @param string $group_key     Key from quarantine_key().
+	 * @param string $action        apply|discard, recorded as the resolution.
+	 * @param int    $skip_run_id   Run already updated by the caller.
+	 * @return int Number of additional runs updated.
+	 */
+	private static function settle_quarantine_group( $connection_id, $group_key, $action, $skip_run_id ) {
+		$updated_runs = 0;
+		$now = self::now_mysql();
+		$user = function_exists( 'get_current_user_id' ) ? get_current_user_id() : 0;
+		foreach ( self::list_runs( $connection_id, 500 ) as $run ) {
+			if ( (int) $run['id'] === (int) $skip_run_id ) {
+				continue;
+			}
+			$diff = self::decode_diff( $run['diff_summary'] );
+			$items = isset( $diff['quarantine'] ) && is_array( $diff['quarantine'] ) ? $diff['quarantine'] : array();
+			if ( empty( $items ) ) {
+				continue;
+			}
+			$changed = false;
+			foreach ( $items as $index => $entry ) {
+				if ( ! is_array( $entry ) || ! empty( $entry['resolved'] ) ) {
+					continue;
+				}
+				if ( self::quarantine_key( (int) $run['connection_id'], $entry ) !== $group_key ) {
+					continue;
+				}
+				$items[ $index ]['resolved']    = true;
+				$items[ $index ]['resolution']  = $action;
+				$items[ $index ]['resolved_at'] = $now;
+				$items[ $index ]['resolved_by'] = $user;
+				$changed = true;
+			}
+			if ( $changed ) {
+				$diff['quarantine'] = array_values( $items );
+				self::update_run( (int) $run['id'], array( 'diff_summary' => self::json( $diff ) ) );
+				$updated_runs++;
+			}
+		}
+		return $updated_runs;
+	}
+
+	public static function quarantine_key( $connection_id, array $item ) {
+		$payload = isset( $item['payload'] ) && is_array( $item['payload'] ) ? $item['payload'] : array();
+		ksort( $payload );
+		return sha1(
+			absint( $connection_id ) . '|' .
+			strtolower( trim( (string) ( isset( $item['sku'] ) ? $item['sku'] : '' ) ) ) . '|' .
+			strtolower( trim( (string) ( isset( $item['variation_sku'] ) ? $item['variation_sku'] : '' ) ) ) . '|' .
+			(string) ( isset( $item['reason'] ) ? $item['reason'] : '' ) . '|' .
+			self::json( $payload )
+		);
+	}
+
 	public static function list_quarantine( $connection_id = 0, $limit = 200 ) {
-		$items = array();
 		$limit = max( 1, min( 10000, absint( $limit ) ) );
+
+		$groups   = array();
+		$resolved = array();
 		foreach ( self::list_runs( $connection_id, 500 ) as $run ) {
 			$diff = self::decode_diff( $run['diff_summary'] );
 			foreach ( (array) ( isset( $diff['quarantine'] ) ? $diff['quarantine'] : array() ) as $item ) {
-				if ( ! is_array( $item ) || ! empty( $item['resolved'] ) ) {
+				if ( ! is_array( $item ) ) {
 					continue;
 				}
-				$item['run_id']        = (int) $run['id'];
-				$item['connection_id'] = (int) $run['connection_id'];
-				$item['run_state']     = (string) $run['state'];
-				$item['diff_hash']     = (string) $run['diff_hash'];
-				$items[]               = $item;
-				if ( count( $items ) >= absint( $limit ) ) {
-					return $items;
+				$key = self::quarantine_key( (int) $run['connection_id'], $item );
+				if ( ! empty( $item['resolved'] ) ) {
+					// Resolving one occurrence settles the whole group: the
+					// human answered the question the entry was asking.
+					$resolved[ $key ] = true;
+					continue;
 				}
+				if ( isset( $groups[ $key ] ) ) {
+					$groups[ $key ]['occurrences']++;
+					// Track the range explicitly rather than trusting the order
+					// list_runs() happens to return.
+					if ( (int) $run['id'] > (int) $groups[ $key ]['last_seen_run_id'] ) {
+						$groups[ $key ]['last_seen_run_id'] = (int) $run['id'];
+						$groups[ $key ]['run_id']           = (int) $run['id'];
+						$groups[ $key ]['run_state']        = (string) $run['state'];
+						$groups[ $key ]['diff_hash']        = (string) $run['diff_hash'];
+					}
+					if ( (int) $run['id'] < (int) $groups[ $key ]['first_seen_run_id'] ) {
+						$groups[ $key ]['first_seen_run_id'] = (int) $run['id'];
+					}
+					continue;
+				}
+				// An action targets the latest run that still holds the entry.
+				$item['run_id']            = (int) $run['id'];
+				$item['connection_id']     = (int) $run['connection_id'];
+				$item['run_state']         = (string) $run['state'];
+				$item['diff_hash']         = (string) $run['diff_hash'];
+				$item['quarantine_key']    = $key;
+				$item['occurrences']       = 1;
+				$item['last_seen_run_id']  = (int) $run['id'];
+				$item['first_seen_run_id'] = (int) $run['id'];
+				$groups[ $key ]            = $item;
+			}
+		}
+
+		$items = array();
+		foreach ( $groups as $key => $item ) {
+			if ( isset( $resolved[ $key ] ) ) {
+				continue;
+			}
+			$items[] = $item;
+			if ( count( $items ) >= $limit ) {
+				break;
 			}
 		}
 		return $items;
@@ -681,6 +792,8 @@ class BCS_Sync_Runner {
 			$product_id = isset( $applied['product_id'] ) ? (int) $applied['product_id'] : 0;
 		}
 
+		$group_key = self::quarantine_key( (int) $run['connection_id'], $item );
+
 		$items[ $found_index ]['resolved']       = true;
 		$items[ $found_index ]['resolution']     = $action;
 		$items[ $found_index ]['resolved_at']    = self::now_mysql();
@@ -690,6 +803,16 @@ class BCS_Sync_Runner {
 		if ( is_wp_error( $updated ) ) {
 			return $updated;
 		}
+
+		/*
+		 * The same entry is recorded again by every run that meets the same
+		 * rejected row, so a scheduled sync can hold hundreds of identical
+		 * copies. Resolving only this run would leave all of them open and the
+		 * screen unchanged — the human would have to answer the same question
+		 * once per minute of history. The write, if any, happened once above;
+		 * the rest of the group is only marked settled.
+		 */
+		self::settle_quarantine_group( (int) $run['connection_id'], $group_key, $action, (int) $run_id );
 
 		BCS_Audit_Logger::log_row(
 			'bcs/sync-quarantine',

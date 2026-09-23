@@ -547,7 +547,23 @@ class BCS_Sync_Admin {
 		foreach ( (array) $items as $item ) {
 			$run_id = absint( $item['run_id'] );
 			$sku    = isset( $item['variation_sku'] ) && $item['variation_sku'] ? $item['variation_sku'] : ( isset( $item['sku'] ) ? $item['sku'] : '' );
-			echo '<tr><td><code>' . esc_html( $sku ) . '</code></td><td>' . esc_html( isset( $item['reason'] ) ? $item['reason'] : '' ) . '</td><td><code>' . esc_html( self::json_preview( isset( $item['payload'] ) ? $item['payload'] : array() ) ) . '</code></td><td>#' . esc_html( (string) $run_id ) . '</td><td>';
+			// Identical entries are one row: a scheduled sync records the same
+			// held row on every run, so the count and the run range say how long
+			// it has been waiting instead of filling the screen with copies.
+			$occurrences = isset( $item['occurrences'] ) ? absint( $item['occurrences'] ) : 1;
+			$first_run   = isset( $item['first_seen_run_id'] ) ? absint( $item['first_seen_run_id'] ) : $run_id;
+			if ( $occurrences > 1 ) {
+				$run_label = sprintf(
+					/* translators: 1: latest run id, 2: first run id, 3: occurrence count */
+					__( '#%1$d (since #%2$d, %3$d runs)', 'bulk-catalog-studio' ),
+					$run_id,
+					$first_run,
+					$occurrences
+				);
+			} else {
+				$run_label = '#' . $run_id;
+			}
+			echo '<tr><td><code>' . esc_html( $sku ) . '</code></td><td>' . esc_html( isset( $item['reason'] ) ? $item['reason'] : '' ) . '</td><td><code>' . esc_html( self::json_preview( isset( $item['payload'] ) ? $item['payload'] : array() ) ) . '</code></td><td>' . esc_html( $run_label ) . '</td><td>';
 			self::quarantine_form( $run_id, $sku, 'apply', __( 'Apply anyway', 'bulk-catalog-studio' ), 'primary' );
 			self::quarantine_form( $run_id, $sku, 'discard', __( 'Discard', 'bulk-catalog-studio' ), 'secondary' );
 			echo '</td></tr>';
