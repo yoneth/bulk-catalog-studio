@@ -29,6 +29,9 @@ class BCS_Settings {
 			'allow_sideload'        => false,   // Gate1 #4 dibuka untuk V1.1: sideload hanya bila dinyalakan DAN host masuk whitelist.
 			'sideload_domain_whitelist' => array( 'cf.djavaweb.com', 'img.lazcdn.com' ), // Host yang boleh disideload; kosong = tolak semua.
 			'sideload_timeout'      => 15,      // Detik per unduhan gambar.
+			'audit_retention_days'      => 90,  // Baris audit lebih tua dari ini boleh dipangkas.
+			'sync_runs_retention_days'  => 90,  // Run sync lebih tua dari ini boleh dipangkas.
+			'purge_batch_size'          => 200, // Baris per iterasi purge; kecil supaya tidak mengunci tabel.
 			'allow_url_source'      => true,    // URL export CSV publik Google Sheets (gate1 #1).
 			'execution_time_budget' => 20.0,    // Detik; sisanya dilanjutkan via resume.
 		);

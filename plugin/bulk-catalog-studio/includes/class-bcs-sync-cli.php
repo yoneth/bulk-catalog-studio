@@ -89,6 +89,49 @@ class BCS_Sync_CLI {
 	}
 
 	/**
+	 * Delete log history older than the configured retention.
+	 *
+	 * The plugin registers no WP-Cron event (spec §1.2): scheduling is a system
+	 * cron job, so retention is a command rather than a hooked event.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--dry-run]
+	 * : Report what would be deleted without deleting anything.
+	 *
+	 * [--batch-size=<n>]
+	 * : Rows per table per invocation. Defaults to the purge_batch_size setting.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp bcs sync purge-logs --dry-run
+	 *     wp bcs sync purge-logs
+	 *
+	 * @subcommand purge-logs
+	 *
+	 * @param array $args Positional arguments.
+	 * @param array $assoc_args Associative arguments.
+	 * @return void
+	 */
+	public function purge_logs( $args, $assoc_args ) {
+		$options = array( 'dry_run' => ! empty( $assoc_args['dry-run'] ) );
+		if ( isset( $assoc_args['batch-size'] ) ) {
+			$options['batch_size'] = absint( $assoc_args['batch-size'] );
+		}
+		$report = BCS_Log_Purge::purge( $options );
+		$this->success(
+			sprintf(
+				/* translators: 1: runs, 2: audit rows, 3: protected runs, 4: dry-run marker */
+				__( 'Purge: %1$d sync run(s), %2$d audit row(s); %3$d run(s) protected.%4$s', 'bulk-catalog-studio' ),
+				(int) $report['runs_deleted'],
+				(int) $report['audit_deleted'],
+				(int) $report['runs_protected'],
+				! empty( $report['dry_run'] ) ? ' (dry run — nothing deleted)' : ''
+			)
+		);
+	}
+
+	/**
 	 * Fetch+parse only: wp bcs sync test-connection --connection-id=<id>.
 	 *
 	 * ## EXAMPLES

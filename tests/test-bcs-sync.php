@@ -216,6 +216,7 @@ function wp_remote_get( $url, $args = array() ) { return array( 'response' => ar
 function wp_remote_retrieve_response_code( $response ) { return (int) $response['response']['code']; }
 function wp_remote_retrieve_body( $response ) { return (string) $response['body']; }
 
+defined( 'DAY_IN_SECONDS' ) || define( 'DAY_IN_SECONDS', 86400 );
 $base = dirname( __DIR__ ) . '/plugin/bulk-catalog-studio/includes/';
 require $base . 'class-bcs-settings.php';
 require $base . 'class-bcs-csv-parser.php';
@@ -227,6 +228,7 @@ require $base . 'class-bcs-duplicate-checker.php';
 require $base . 'class-bcs-audit-logger.php';
 require $base . 'class-bcs-catalog-writer.php';
 require $base . 'class-bcs-sync-runner.php';
+require $base . 'class-bcs-log-purge.php';
 
 $fail = 0;
 function expect_sync( $label, $condition ) { global $fail; echo ( $condition ? 'PASS' : 'FAIL' ) . " - $label\n"; if ( ! $condition ) { $fail++; } }
@@ -291,6 +293,97 @@ $missing = BCS_Sync_Diff::diff( array( array( 'sku' => 'SKU-1', 'name' => 'Item'
 expect_sync( 'one missing SKU is flagged', ! is_wp_error( $missing ) && 1 === $missing['summary']['flag_missing'] );
 $guard = BCS_Sync_Diff::diff( array( array( 'sku' => 'SKU-1', 'name' => 'Item', 'regular_price' => '10' ) ), sync_connection( array( 'policy' => array( 'seen_skus' => array( 'SKU-1', 'SKU-2', 'SKU-3', 'SKU-4', 'SKU-5' ) ) ) ), $base_state );
 expect_sync( 'more than 20 percent missing aborts', is_wp_error( $guard ) && 'missing_rows_guard' === $guard->get_error_code() );
+/*
+ * Log retention. Deleting history cannot be undone, so the four protection rules
+ * are pinned here as invariants rather than left to the purge query's shape.
+ */
+$old_date = gmdate( 'Y-m-d H:i:s', time() - ( 200 * DAY_IN_SECONDS ) );
+$new_date = gmdate( 'Y-m-d H:i:s' );
+$purge_runs = array(
+	// Old and finished, on a connection that has a newer run: the only candidate.
+	array( 'id' => 9001, 'connection_id' => 50, 'state' => 'done', 'started_at' => $old_date, 'diff_summary' => wp_json_encode( array( 'quarantine' => array() ) ) ),
+	// (a) the latest run of its connection — rollback_run() needs it.
+	array( 'id' => 9002, 'connection_id' => 50, 'state' => 'done', 'started_at' => $old_date, 'diff_summary' => wp_json_encode( array( 'quarantine' => array() ) ) ),
+	// (b) still waiting for a human.
+	array( 'id' => 9003, 'connection_id' => 51, 'state' => 'awaiting_approval', 'started_at' => $old_date, 'diff_summary' => wp_json_encode( array( 'quarantine' => array() ) ) ),
+	// (c) holds a quarantine entry nobody answered.
+	array( 'id' => 9004, 'connection_id' => 52, 'state' => 'done', 'started_at' => $old_date, 'diff_summary' => wp_json_encode( array( 'quarantine' => array( array( 'sku' => 'HOLD-1', 'reason' => 'price_delta_exceeded' ) ) ) ) ),
+	// keeps 9004 from being the latest of its connection
+	array( 'id' => 9005, 'connection_id' => 52, 'state' => 'done', 'started_at' => $new_date, 'diff_summary' => wp_json_encode( array( 'quarantine' => array() ) ) ),
+	// keeps 9003 from being the latest of its connection
+	array( 'id' => 9006, 'connection_id' => 51, 'state' => 'done', 'started_at' => $new_date, 'diff_summary' => wp_json_encode( array( 'quarantine' => array() ) ) ),
+);
+$purge_protected = BCS_Log_Purge::protected_run_ids( $purge_runs );
+expect_sync(
+	'the latest run of a connection is never purged (rollback depends on it)',
+	isset( $purge_protected[9002] ) && 'latest_run' === $purge_protected[9002]
+);
+expect_sync(
+	'a run awaiting approval is never purged',
+	isset( $purge_protected[9003] ) && 0 === strpos( (string) $purge_protected[9003], 'active_state:' )
+);
+expect_sync(
+	'a run holding an unresolved quarantine entry is never purged',
+	isset( $purge_protected[9004] ) && 'unresolved_quarantine' === $purge_protected[9004]
+);
+expect_sync(
+	'an old finished run that nothing depends on is purgeable',
+	! isset( $purge_protected[9001] )
+);
+// A resolved quarantine entry no longer protects its run.
+$purge_resolved_run = array( array( 'id' => 9007, 'connection_id' => 53, 'state' => 'done', 'started_at' => $old_date, 'diff_summary' => wp_json_encode( array( 'quarantine' => array( array( 'sku' => 'HOLD-1', 'resolved' => true ) ) ) ) ), array( 'id' => 9008, 'connection_id' => 53, 'state' => 'done', 'started_at' => $new_date, 'diff_summary' => '' ) );
+$purge_protected_resolved = BCS_Log_Purge::protected_run_ids( $purge_resolved_run );
+expect_sync(
+	'a resolved quarantine entry stops protecting its run',
+	! isset( $purge_protected_resolved[9007] )
+);
+
+// End-to-end purge against the fake tables, including invariant (d): the audit
+// trail of a run that is being kept must be kept with it.
+$GLOBALS['wpdb']->tables['wp_bcs_sync_runs'] = array();
+$GLOBALS['wpdb']->tables['wp_bcs_audit'] = array();
+foreach ( $purge_runs as $pr ) {
+	$GLOBALS['wpdb']->tables['wp_bcs_sync_runs'][] = $pr;
+}
+$GLOBALS['wpdb']->tables['wp_bcs_audit'] = array(
+	array( 'id' => 8001, 'job_id' => 9001, 'source' => 'sync', 'created_at' => $old_date ), // milik run yang dihapus
+	array( 'id' => 8002, 'job_id' => 9002, 'source' => 'sync', 'created_at' => $old_date ), // milik run yang DIPERTAHANKAN
+	array( 'id' => 8003, 'job_id' => 9004, 'source' => 'sync', 'created_at' => $old_date ), // milik run karantina belum resolved
+	array( 'id' => 8004, 'job_id' => 0,    'source' => 'batch', 'created_at' => $old_date ), // batch lama, boleh dihapus
+	array( 'id' => 8005, 'job_id' => 9001, 'source' => 'sync', 'created_at' => $new_date ), // masih baru
+);
+update_option( 'bcs_settings', array( 'audit_retention_days' => 90, 'sync_runs_retention_days' => 90, 'purge_batch_size' => 200 ) );
+
+$purge_report = BCS_Log_Purge::purge( array( 'dry_run' => true ) );
+$runs_left_after_dry = count( $GLOBALS['wpdb']->tables['wp_bcs_sync_runs'] );
+expect_sync(
+	'a dry run reports work without deleting anything',
+	1 === (int) $purge_report['runs_deleted'] && 6 === $runs_left_after_dry
+);
+
+$purge_report = BCS_Log_Purge::purge();
+$remaining_runs = array();
+foreach ( $GLOBALS['wpdb']->tables['wp_bcs_sync_runs'] as $row ) { $remaining_runs[] = (int) $row['id']; }
+$remaining_audit = array();
+foreach ( $GLOBALS['wpdb']->tables['wp_bcs_audit'] as $row ) { $remaining_audit[] = (int) $row['id']; }
+expect_sync(
+	'purge deletes only the old unprotected run',
+	! in_array( 9001, $remaining_runs, true )
+	&& in_array( 9002, $remaining_runs, true )
+	&& in_array( 9003, $remaining_runs, true )
+	&& in_array( 9004, $remaining_runs, true )
+);
+expect_sync(
+	'audit of a protected run is kept, audit of a purged run is not',
+	! in_array( 8001, $remaining_audit, true )
+	&& in_array( 8002, $remaining_audit, true )
+	&& in_array( 8003, $remaining_audit, true )
+	&& ! in_array( 8004, $remaining_audit, true )
+	&& in_array( 8005, $remaining_audit, true )
+);
+$GLOBALS['wpdb']->tables['wp_bcs_sync_runs'] = array();
+$GLOBALS['wpdb']->tables['wp_bcs_audit'] = array();
+
 /*
  * Quarantine deduplication. A held row is recorded inside every run's
  * diff_summary, so a sync on a one-minute schedule records an identical entry

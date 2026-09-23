@@ -45,6 +45,7 @@ require_once BCS_PLUGIN_DIR . 'includes/class-bcs-catalog-writer.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-executor.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-rollback-service.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-sync-runner.php';
+require_once BCS_PLUGIN_DIR . 'includes/class-bcs-log-purge.php';
 require_once BCS_PLUGIN_DIR . 'includes/class-bcs-install.php';
 if ( defined( 'WP_CLI' ) && WP_CLI ) {
 	require_once BCS_PLUGIN_DIR . 'includes/class-bcs-sync-cli.php';

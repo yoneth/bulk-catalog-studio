@@ -45,6 +45,43 @@ Per-minute matches the Gate-1 decision. Each connection still runs only when its
 own `interval_minutes` says it is due — `run-due` skips everything else, so the
 minute tick is cheap.
 
+## Log retention
+
+A sync on a one-minute schedule writes a run row and several audit rows every
+minute, and each run stores its whole diff as JSON. On the live site that was 881
+runs and 2200 audit rows in about 22 hours, with `wp_bcs_sync_runs` already at
+3.67 MB. Retention keeps that bounded.
+
+Add a second, daily entry — the plugin registers no WP-Cron event, so retention
+is a command like the worker itself:
+
+```cron
+17 3 * * * /usr/local/lsws/lsphp81/bin/php /usr/local/bin/wp --path=/home/runcloud/webapps/cf --skip-plugins=novamira bcs sync purge-logs >> /home/runcloud/bcs-logs/bcs-purge.log 2>&1
+```
+
+Check what it would do before letting it run for real:
+
+```bash
+sudo -u runcloud /usr/local/lsws/lsphp81/bin/php /usr/local/bin/wp \
+  --path=/home/runcloud/webapps/cf --skip-plugins=novamira \
+  bcs sync purge-logs --dry-run
+```
+
+Retention is configured in the `bcs_settings` option: `audit_retention_days`
+(90), `sync_runs_retention_days` (90) and `purge_batch_size` (200). Deletes go
+one row at a time in small batches so no long table lock is taken, and the purge
+records what it removed in the audit trail.
+
+Four things are never deleted, whatever their age:
+
+- the latest run of every connection — `rollback_run()` refuses to roll back
+  anything else, so deleting it would quietly remove the only run a human could
+  still undo;
+- any run that has not finished, including `awaiting_approval`;
+- any run still holding a quarantine entry nobody has answered, since the entry
+  lives inside that run's `diff_summary`;
+- the audit rows belonging to a run that is being kept.
+
 ## Verify
 
 ```bash
