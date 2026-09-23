@@ -52,19 +52,19 @@ minute, and each run stores its whole diff as JSON. On the live site that was 88
 runs and 2200 audit rows in about 22 hours, with `wp_bcs_sync_runs` already at
 3.67 MB. Retention keeps that bounded.
 
-Add a second, daily entry — the plugin registers no WP-Cron event, so retention
-is a command like the worker itself:
+Retention runs through its own wrapper, `ops/bcs-sync-purge-cron.sh`, which
+carries the same guards as the sync worker — not root, the site's PHP with
+novamira skipped, and an flock so a long purge cannot overlap the next day's:
 
 ```cron
-17 3 * * * /usr/local/lsws/lsphp81/bin/php /usr/local/bin/wp --path=/home/runcloud/webapps/cf --skip-plugins=novamira bcs sync purge-logs >> /home/runcloud/bcs-logs/bcs-purge.log 2>&1
+17 3 * * * /home/runcloud/webapps/cf/ops/bcs-sync-purge-cron.sh >> /home/runcloud/bcs-logs/bcs-purge.log 2>&1
 ```
 
-Check what it would do before letting it run for real:
+Check what it would do before trusting it. `BCS_PURGE_DRY_RUN=1` reports what
+would be removed and deletes nothing:
 
 ```bash
-sudo -u runcloud /usr/local/lsws/lsphp81/bin/php /usr/local/bin/wp \
-  --path=/home/runcloud/webapps/cf --skip-plugins=novamira \
-  bcs sync purge-logs --dry-run
+sudo -u runcloud BCS_PURGE_DRY_RUN=1 /home/runcloud/webapps/cf/ops/bcs-sync-purge-cron.sh
 ```
 
 Retention is configured in the `bcs_settings` option: `audit_retention_days`
